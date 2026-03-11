@@ -30,6 +30,7 @@
 
 #ifndef _HINT_M_H_
 #define _HINT_M_H_
+#define TOMBSTONE_ID std::numeric_limits<RecordId>::max()
 
 #include "../def_global.h"
 #include "../containers/relation.h"
