@@ -173,6 +173,9 @@ bool checkOptimizations(string strOptimizations, RunSettings &settings)
     {
         settings.typeOptimizations = HINT_OPTIMIZATIONS_SS;
         return true;
+    }else if (strOptimizations == "PLUS") {
+        settings.typeOptimizations = HINT_M_DELTA;
+        return true;
     }
 
 

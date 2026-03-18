@@ -52,7 +52,6 @@ private:
     // Construction
     inline void updateCounters(const Record &r);
     inline void updatePartitions(const Record &r);
-    
 public:
     // Construction
     HINT_M(const Relation &R, const unsigned int numBits, const unsigned int maxBits);
@@ -63,6 +62,33 @@ public:
     // Querying
     size_t executeTopDown_gOverlaps(RangeQuery Q);
     size_t executeBottomUp_gOverlaps(RangeQuery Q);
+};
+
+// Base HINT^m, no optimizations activated
+class HINT_M_Delta : public HierarchicalIndex
+{
+private:
+    Relation **pOrgs, **pReps;
+    RecordId **pOrgs_sizes;
+    size_t   **pReps_sizes;
+    
+    // Construction
+    inline void updateCounters(const Record &r);
+    inline void updatePartitions(const Record &r);
+    inline void markInPartition(Relation &rel, RecordId targetId);
+    
+public:
+    // Construction
+    HINT_M_Delta(const Relation &R, const unsigned int numBits, const unsigned int maxBits);
+    void print(const char c);
+    void getStats();
+    ~HINT_M_Delta();
+    
+    // Querying
+    size_t executeTopDown_gOverlaps(RangeQuery Q);
+    size_t executeBottomUp_gOverlaps(RangeQuery Q);
+    void deleteRecord(const Record &r);
+    void insert(const Record &r);
 };
 
 

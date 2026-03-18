@@ -30,7 +30,7 @@
 
 #include "hint_m.h"
 
-inline void HINT_M::updateCounters(const Record &r) {
+inline void HINT_M_Delta::updateCounters(const Record &r) {
   int level = 0;
   Timestamp a = r.start >> (this->maxBits - this->numBits);
   Timestamp b = r.end >> (this->maxBits - this->numBits);
@@ -68,7 +68,7 @@ inline void HINT_M::updateCounters(const Record &r) {
   }
 }
 
-inline void HINT_M::updatePartitions(const Record &r) {
+inline void HINT_M_Delta::updatePartitions(const Record &r) {
   int level = 0;
   Timestamp a = r.start >> (this->maxBits - this->numBits);
   Timestamp b = r.end >> (this->maxBits - this->numBits);
@@ -106,7 +106,7 @@ inline void HINT_M::updatePartitions(const Record &r) {
   }
 }
 
-HINT_M::HINT_M(const Relation &R, const unsigned int numBits,
+HINT_M_Delta::HINT_M_Delta(const Relation &R, const unsigned int numBits,
                const unsigned int maxBits)
     : HierarchicalIndex(R, numBits, maxBits) {
   // Step 1: one pass to count the contents inside each partition.
@@ -158,7 +158,7 @@ HINT_M::HINT_M(const Relation &R, const unsigned int numBits,
   free(pReps_sizes);
 }
 
-void HINT_M::print(char c) {
+void HINT_M_Delta::print(char c) {
   for (auto l = 0; l < this->height; l++) {
     auto cnt = pow(2, this->numBits - l);
 
@@ -176,7 +176,7 @@ void HINT_M::print(char c) {
   }
 }
 
-void HINT_M::getStats() {
+void HINT_M_Delta::getStats() {
   for (auto l = 0; l < this->height; l++) {
     auto cnt = pow(2, this->numBits - l);
 
@@ -194,7 +194,7 @@ void HINT_M::getStats() {
       (this->numPartitions - numEmptyPartitions);
 }
 
-HINT_M::~HINT_M() {
+HINT_M_Delta::~HINT_M_Delta() {
   for (auto l = 0; l < this->height; l++) {
     delete[] this->pOrgs[l];
     delete[] this->pReps[l];
@@ -204,7 +204,7 @@ HINT_M::~HINT_M() {
 }
 
 // Generalized predicates, ACM SIGMOD'22 gOverlaps
-size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
+size_t HINT_M_Delta::executeTopDown_gOverlaps(RangeQuery Q) {
   size_t result = 0;
   RelationIterator iter, iterBegin, iterEnd;
   Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
@@ -216,6 +216,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
     iterBegin = this->pOrgs[l][a].begin();
     iterEnd = this->pOrgs[l][a].end();
     for (iter = iterBegin; iter != iterEnd; iter++) {
+      if (iter->id == TOMBSTONE_ID) continue;
       if ((iter->start <= Q.end) && (Q.start <= iter->end)) {
 #ifdef WORKLOAD_COUNT
         result++;
@@ -228,6 +229,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
     iterBegin = this->pReps[l][a].begin();
     iterEnd = this->pReps[l][a].end();
     for (iter = iterBegin; iter != iterEnd; iter++) {
+      if (iter->id == TOMBSTONE_ID) continue;
       if ((iter->start <= Q.end) && (Q.start <= iter->end)) {
 #ifdef WORKLOAD_COUNT
         result++;
@@ -244,6 +246,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
         iterBegin = this->pOrgs[l][j].begin();
         iterEnd = this->pOrgs[l][j].end();
         for (iter = iterBegin; iter != iterEnd; iter++) {
+          if (iter->id == TOMBSTONE_ID) continue;
 #ifdef WORKLOAD_COUNT
           result++;
 #else
@@ -257,6 +260,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
       iterBegin = this->pOrgs[l][b].begin();
       iterEnd = this->pOrgs[l][b].end();
       for (iter = iterBegin; iter != iterEnd; iter++) {
+        if (iter->id == TOMBSTONE_ID) continue;
         if (iter->start <= Q.end) {
 #ifdef WORKLOAD_COUNT
           result++;
@@ -275,6 +279,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
   iterBegin = this->pOrgs[this->numBits][0].begin();
   iterEnd = this->pOrgs[this->numBits][0].end();
   for (iter = iterBegin; iter != iterEnd; iter++) {
+    if (iter->id == TOMBSTONE_ID) continue;
     if ((iter->start <= Q.end) && (Q.start <= iter->end)) {
 #ifdef WORKLOAD_COUNT
       result++;
@@ -287,7 +292,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
   return result;
 }
 
-size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
+size_t HINT_M_Delta::executeBottomUp_gOverlaps(RangeQuery Q) {
   size_t result = 0;
   RelationIterator iter, iterBegin, iterEnd;
   Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
@@ -305,6 +310,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
       iterBegin = this->pReps[l][a].begin();
       iterEnd = this->pReps[l][a].end();
       for (iter = iterBegin; iter != iterEnd; iter++) {
+        if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
         result++;
 #else
@@ -317,6 +323,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
         iterBegin = this->pOrgs[l][j].begin();
         iterEnd = this->pOrgs[l][j].end();
         for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
           result++;
 #else
@@ -335,6 +342,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][a].begin();
           iterEnd = this->pOrgs[l][a].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
             if ((iter->start <= Q.end) && (Q.start <= iter->end)) {
 #ifdef WORKLOAD_COUNT
               result++;
@@ -347,6 +355,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][a].begin();
           iterEnd = this->pOrgs[l][a].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
             if (iter->start <= Q.end) {
 #ifdef WORKLOAD_COUNT
               result++;
@@ -359,6 +368,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][a].begin();
           iterEnd = this->pOrgs[l][a].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
             if (Q.start <= iter->end) {
 #ifdef WORKLOAD_COUNT
               result++;
@@ -374,6 +384,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][a].begin();
           iterEnd = this->pOrgs[l][a].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
             if (Q.start <= iter->end) {
 #ifdef WORKLOAD_COUNT
               result++;
@@ -386,6 +397,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][a].begin();
           iterEnd = this->pOrgs[l][a].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
             result++;
 #else
@@ -401,6 +413,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
         iterBegin = this->pReps[l][a].begin();
         iterEnd = this->pReps[l][a].end();
         for (iter = iterBegin; iter != iterEnd; iter++) {
+          if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
           if (Q.start <= iter->end) {
 #ifdef WORKLOAD_COUNT
             result++;
@@ -413,6 +426,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
         iterBegin = this->pReps[l][a].begin();
         iterEnd = this->pReps[l][a].end();
         for (iter = iterBegin; iter != iterEnd; iter++) {
+          if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
           result++;
 #else
@@ -429,6 +443,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
             iterBegin = this->pOrgs[l][j].begin();
             iterEnd = this->pOrgs[l][j].end();
             for (iter = iterBegin; iter != iterEnd; iter++) {
+              if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
               result++;
 #else
@@ -442,6 +457,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
           iterBegin = this->pOrgs[l][b].begin();
           iterEnd = this->pOrgs[l][b].end();
           for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
             if (iter->start <= Q.end) {
 #ifdef WORKLOAD_COUNT
               result++;
@@ -455,6 +471,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
             iterBegin = this->pOrgs[l][j].begin();
             iterEnd = this->pOrgs[l][j].end();
             for (iter = iterBegin; iter != iterEnd; iter++) {
+              if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
               result++;
 #else
@@ -480,6 +497,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
     iterBegin = this->pOrgs[this->numBits][0].begin();
     iterEnd = this->pOrgs[this->numBits][0].end();
     for (iter = iterBegin; iter != iterEnd; iter++) {
+      if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
 #ifdef WORKLOAD_COUNT
       result++;
 #else
@@ -491,6 +509,7 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
     iterBegin = this->pOrgs[this->numBits][0].begin();
     iterEnd = this->pOrgs[this->numBits][0].end();
     for (iter = iterBegin; iter != iterEnd; iter++) {
+      if (iter->id == TOMBSTONE_ID) continue; // SKIP TOMBSTONES
       if ((iter->start <= Q.end) && (Q.start <= iter->end)) {
 #ifdef WORKLOAD_COUNT
         result++;
@@ -502,4 +521,83 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
   }
 
   return result;
+}
+
+void HINT_M_Delta::insert(const Record &r) {
+    int level = 0;
+    // Calculate prefixes for the start and end points
+    Timestamp a = r.start >> (this->maxBits - this->numBits);
+    Timestamp b = r.end   >> (this->maxBits - this->numBits);
+    Timestamp prevb;
+    int firstfound = 0;
+
+    // Standard HINT hierarchical traversal
+    while (level < this->height && a <= b) {
+        if (a % 2) { // Logic for the 'start' side
+            if (firstfound) {
+                // Add as a Replica to the bucket at this level
+                this->pReps[level][a].push_back(r);
+            } else {
+                // Add as an Original to the bucket at this level
+                this->pOrgs[level][a].push_back(r);
+                firstfound = 1;
+            }
+            a++;
+        }
+        if (!(b % 2)) { // Logic for the 'end' side
+            prevb = b;
+            b--;
+            if ((!firstfound) && b < a) {
+                // Add as an Original
+                this->pOrgs[level][prevb].push_back(r);
+            } else {
+                // Add as a Replica
+                this->pReps[level][prevb].push_back(r);
+            }
+        }
+        // Move up the hierarchy
+        a >>= 1; 
+        b >>= 1;
+        level++;
+    }
+    
+    // Update index metadata
+    this->numIndexedRecords++;
+}
+
+void HINT_M_Delta::deleteRecord(const Record &r) {
+    int level = 0;
+    Timestamp a = r.start >> (this->maxBits - this->numBits);
+    Timestamp b = r.end >> (this->maxBits - this->numBits);
+    Timestamp prevb;
+    int firstfound = 0;
+
+    while (level < this->height && a <= b) {
+        if (a % 2) {
+            // Find in Partition a at this level
+            if (firstfound) markInPartition(this->pReps[level][a], r.id);
+            else { markInPartition(this->pOrgs[level][a], r.id); firstfound = 1; }
+            a++;
+        }
+        if (!(b % 2)) {
+            prevb = b;
+            b--;
+            // Find in Partition prevb at this level
+            if ((!firstfound) && b < a) markInPartition(this->pOrgs[level][prevb], r.id);
+            else markInPartition(this->pReps[level][prevb], r.id);
+        }
+        a >>= 1;
+        b >>= 1;
+        level++;
+    }
+}
+
+// Helper to find and mark the ID within a specific partition's Relation
+inline void HINT_M_Delta::markInPartition(Relation &rel, RecordId targetId) {
+    for (auto &record : rel) {
+        if (record.id == targetId) {
+            record.id = TOMBSTONE_ID; // Apply Tombstone
+            return; // Found it in this partition
+        }
+    }
 }

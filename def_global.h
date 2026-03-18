@@ -81,7 +81,7 @@ using namespace std;
 #define HINT_M_OPTIMIZATIONS_SUBS_SORT_SOPT_CM    7
 #define HINT_M_OPTIMIZATIONS_SUBS_SORT_SS_CM      8
 #define HINT_M_OPTIMIZATIONS_ALL                  9
-
+#define HINT_M_DELTA                             10
 
 typedef int PartitionId;
 typedef int RecordId;

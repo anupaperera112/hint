@@ -81,7 +81,6 @@ int main(int argc, char **argv)
     // Parse command line input
     settings.init();
     settings.method = "hint_m_delta";
-    // settings.method = "hint_m";
     while ((c = getopt(argc, argv, "?hvq:m:to:r:")) != -1)
     {
         switch (c)
@@ -238,51 +237,24 @@ int main(int argc, char **argv)
     }
     process_mem_usage(vmI, rssI);
 
-    // if (settings.method == "hint_m_delta") {
-    //     HINT_M_Delta* dynamicIdx = static_cast<HINT_M_Delta*>(idxR);
-        
-    //     // Benchmark Insertions
-    //     Record newRec(99999, R.gstart, R.gstart + 100);
-    //     tim.start();
-    //     dynamicIdx->insert(newRec);
-    //     double insertTime = tim.stop();
-    //     cout << "  Single Insertion time [secs]: " << insertTime << endl;
-
-    //     // Benchmark Deletions (Tombstones)
-    //     tim.start();
-    //     dynamicIdx->deleteRecord(newRec);
-    //     double deleteTime = tim.stop();
-    //     cout << "  Single Deletion time [secs] : " << deleteTime << endl;
-    // }
 
     if (settings.method == "hint_m_delta") {
         HINT_M_Delta* dynamicIdx = static_cast<HINT_M_Delta*>(idxR);
-        int numOps = 1000;
         
-        // 1. Benchmark 1,000 Insertions
+        // Benchmark Insertions
+        Record newRec(99999, R.gstart, R.gstart + 100);
         tim.start();
-        for (int i = 0; i < numOps; ++i) {
-            // Generate unique records to avoid logic conflicts
-            Record r(100000 + i, R.gstart + i, R.gstart + i + 100);
-            dynamicIdx->insert(r);
-        }
-        double totalInsertTime = tim.stop();
-        cout << "  Insertions (" << numOps << ") time [secs]: " << totalInsertTime << endl;
-        cout << "  Insertion Throughput [ops/sec]: " << numOps / totalInsertTime << endl;
+        dynamicIdx->insert(newRec);
+        double insertTime = tim.stop();
+        cout << "  Single Insertion time [secs]: " << insertTime << endl;
 
-        // 2. Benchmark 1,000 Deletions (Tombstones)
+        // Benchmark Deletions (Tombstones)
         tim.start();
-        for (int i = 0; i < numOps; ++i) {
-            // Target the records we just inserted
-            Record r(100000 + i, R.gstart + i, R.gstart + i + 100);
-            dynamicIdx->deleteRecord(r);
-        }
-        double totalDeleteTime = tim.stop();
-        cout << "  Deletions (" << numOps << ") time [secs] : " << totalDeleteTime << endl;
-        cout << "  Deletion Throughput [ops/sec] : " << numOps / totalDeleteTime << endl;
-        cout << endl;
+        dynamicIdx->deleteRecord(newRec);
+        double deleteTime = tim.stop();
+        cout << "  Single Deletion time [secs] : " << deleteTime << endl;
     }
-
+    
     // Execute queries
     size_t sumQ = 0;
     if (settings.verbose)
