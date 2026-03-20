@@ -82,14 +82,24 @@ Three approaches compared:
 ## Usage
 
 ```bash
-# Build
+# 1. Build
 make hint_m_delta
 
-# Run with operations and thresholds
+# 2. Decompress sample data (only needed once — ships as .gz)
+gunzip -k samples/AARHUS-BOOKS_2013.dat.gz
+
+# 3. Run without operations (baseline)
+./query_hint_m_delta.exec -m 10 -q gOVERLAPS \
+    samples/AARHUS-BOOKS_2013.dat samples/AARHUS-BOOKS_2013_20k.qry
+
+# 4. Create a sample operations file
+printf 'I 100 200\nI 150 300\nI 500 1000\nD 0\nD 1\n' > ops.txt
+
+# 5. Run with operations and custom thresholds
 ./query_hint_m_delta.exec -m 10 -q gOVERLAPS \
     -u ops.txt -i 500 -d 200 \
     samples/AARHUS-BOOKS_2013.dat samples/AARHUS-BOOKS_2013_20k.qry
 
-# Run full benchmark
+# 6. Run full benchmark
 bash benchmark_delta.sh
 ```
