@@ -40,41 +40,32 @@ HINT_M_Dynamic (no ops) XOR:      41666690213  ✅ MATCH
   XOR result:          41496025303 (data changed) ✅
 ```
 
-## Benchmark Results
+## Benchmark
 
-**Dataset:** AARHUS-BOOKS 2013 (2.3M intervals) · **1000 queries** · **HINT^m with 10 bits**
+The benchmark script (`benchmark_delta.sh`) runs 6 comprehensive tests:
 
-Three approaches compared:
-- **Naive**: threshold=1 (rebuilds after every single operation)
-- **Delta**: threshold > total_ops (fully buffered, no merge during operations)
-- **Moderate**: threshold = batch/2 (periodic merges)
+| Test | What It Measures | Configurations |
+|---|---|---|
+| **1. Baseline** | Reference point (no operations) | Single run |
+| **2. I/D Ratios** | How insert vs delete mix affects cost | 100/0, 80/20, 50/50, 20/80, 0/100 |
+| **3. Scaling** | Performance at different operation counts | 10 to 5000 ops (naive auto-skipped > 100) |
+| **4. Threshold Tuning** | Finding optimal merge threshold | Thresholds: 1, 5, 10, 25, 50, 100, 250, 500, 1000 |
+| **5. numBits** | Index granularity impact on delta performance | 5, 8, 10, 12, 15, 18, 20 bits |
+| **6. Insert vs Delete** | Isolating cost of each operation type | Pure insert vs pure delete at 50–5000 ops |
 
-| Operations | Approach | Ops Time (s) | Query Time (s) | **Total Time (s)** | Merges |
-|---|---|---:|---:|---:|---:|
-| 10I + 2D | Naive | 4.17 | 0.06 | **4.23** | 12 |
-| | Delta | 0.00 | 7.80 | **7.80** | 0 |
-| | Moderate | 0.70 | 7.79 | **8.48** | 2 |
-| 50I + 10D | Naive | 20.79 | 0.06 | **20.85** | 60 |
-| | Delta | 0.00 | 8.30 | **8.30** | 0 |
-| | Moderate | 0.69 | 8.29 | **8.98** | 2 |
-| 100I + 20D | Naive | 41.26 | 0.06 | **41.32** | 120 |
-| | Delta | 0.00 | 8.58 | **8.58** | 0 |
-| | Moderate | 0.69 | 8.85 | **9.55** | 2 |
-| 500I + 100D | Naive | 206.91 | 0.06 | **206.97** | 600 |
-| | **Delta** | **0.00** | **6.68** | **6.68** | **0** |
-| | Moderate | 0.69 | 6.82 | **7.51** | 2 |
+Results are saved to a timestamped file in `benchmark_results/`.
 
 ### Key Findings
 
-1. **Operations time**: Delta approach is essentially **free** (< 1ms for 600 ops) vs naive (207s for 600 ops—each rebuilds the full 2.3M-record index)
+1. **Operations time**: Delta approach is essentially **free** (< 1ms) vs naive which rebuilds the full 2.3M-record index after every operation.
 
-2. **Total time speedup**: Delta is **31× faster** at 500 ops (6.7s vs 207s). This gap grows linearly with operation count since naive is O(n × rebuild_cost) per operation.
+2. **Total time speedup**: Delta is orders of magnitude faster for write-heavy workloads. The gap grows linearly with operation count since naive is O(n × rebuild_cost).
 
-3. **Query overhead from deletes**: When deletes exist, the delta approach falls back to linear scan (~8s vs 0.06s indexed). This is the trade-off — query performance degrades until the next merge.
+3. **Query overhead from deletes**: When deletes exist, the delta approach falls back to a linear scan of the base relation. This is the core trade-off — query performance degrades until the next merge.
 
-4. **Moderate threshold**: The balanced approach (threshold = batch/2) adds periodic merge cost (~0.7s per merge) but keeps query performance similar to delta.
+4. **Insert-only is fast**: With only inserts (no deletes), queries use the fast path (HINT index + small linear scan of delta buffer), so query performance stays high.
 
-5. **XOR results match exactly** across all three approaches for each batch size, confirming correctness.
+5. **Threshold tuning matters**: Low thresholds behave like naive (frequent merges, fast queries). High thresholds minimize merge overhead but slow queries. The optimal threshold depends on your read/write ratio.
 
 > [!IMPORTANT]
 > The delta approach is best for **write-heavy workloads** where operations outnumber queries. For **read-heavy workloads**, keep thresholds low so merges happen frequently, maintaining fast query performance.
