@@ -7,3 +7,4 @@
 *.bin
 *.exec
 samples/AARHUS-BOOKS_2013.dat
+benchmark_results/
