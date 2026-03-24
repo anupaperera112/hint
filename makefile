@@ -1,5 +1,5 @@
 CC      = g++
-CFLAGS  = -O3 -mavx -std=c++14 -w
+CFLAGS  = -O3  -std=c++14 -w -I/opt/homebrew/include -I/usr/local/include
 LDFLAGS =
 
 
