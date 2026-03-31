@@ -1,0 +1,7 @@
+g++ -O3 -mavx2 -std=c++14 -w -c indices/hint_m_simd.cpp -o indices/hint_m_simd.o
+In file included from indices/hint_m_simd.cpp:31:
+indices/hint_m.h:39:10: fatal error: boost/dynamic_bitset.hpp: No such file or directory
+   39 | #include <boost/dynamic_bitset.hpp>
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~
+compilation terminated.
+make: *** [makefile:30: indices/hint_m_simd.o] Error 1

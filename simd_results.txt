@@ -1,0 +1,34 @@
+
+HINT^m
+======
+Input
+  Num of intervals          : 2312602
+  Domain size               : 31507200
+  Avg interval extent [%]   : 6.986712
+
+Index
+  Optimizations             : ALL
+  Num of bits               : 10
+  Num of partitions         : 2047
+  Num of Originals (In)     : 57522
+  Num of Originals (Aft)    : 2255080
+  Num of replicas (In)      : 2255080
+  Num of replicas (Aft)     : 7291502
+  Num of empty partitions   : 218
+  Avg partition size        : 6483.971680
+  Read VM [Bytes]           : 102731776
+  Read RSS [Bytes]          : 103022592
+  Indexing time [secs]      : 1.296872
+
+Queries
+  Predicate type            : GOVERLAPS
+  Strategy                  : bottom-up
+  Num of runs per query     : 5
+  Num of queries            : 20000
+  Avg query extent [%]      : 3.555481
+  Total result [XOR]        : 41666690213
+  Total querying time [secs]: 1.187260
+  Avg querying time [secs]  : 0.000059
+
+  Throughput [queries/sec]  : 16845.503161
+
