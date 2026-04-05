@@ -51,20 +51,27 @@ inline void simd_eval_both(const int *soa, size_t n, const RangeQuery &Q, size_t
     const int *starts = soa + n;
     const int *ends   = soa + 2 * n;
 
+    //_mm256_set1_epi32 => set input value 8 times in register
     const __m256i v_qend   = _mm256_set1_epi32(Q.end);
     const __m256i v_qstart = _mm256_set1_epi32(Q.start);
     const __m256i v_ones   = _mm256_set1_epi32(-1);
 
     size_t i = 0;
     for (; i + 8 <= n; i += 8) {
+        //_mm256_loadu_si256 => loads 8 integerrs(256 bits) from the starting point 
         __m256i v_s = _mm256_loadu_si256((const __m256i*)(starts + i));
         __m256i v_e = _mm256_loadu_si256((const __m256i*)(ends   + i));
 
         // start <= Q.end  <=>  NOT(start > Q.end)
+
+        // _mm256_cmpgt_epi32 => check v_s greater than v_qend and fillls the cmp1 with 0xFFFFFFFF or 0
+        // _mm256_andnot_si256 => do bitwise and  results the not() this is essential because avx intrinsics only has a<b 
+        // but we need b<=a which equals to not(a<b)
         __m256i cmp1 = _mm256_andnot_si256(_mm256_cmpgt_epi32(v_s, v_qend), v_ones);
         // Q.start <= end  <=>  NOT(Q.start > end)
         __m256i cmp2 = _mm256_andnot_si256(_mm256_cmpgt_epi32(v_qstart, v_e), v_ones);
 
+        //_mm256_movemask_ps => creates integer containing the sign bit of each 8 integers 
         int mask = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_and_si256(cmp1, cmp2)));
         if (mask) {
 #ifdef WORKLOAD_COUNT
@@ -108,6 +115,7 @@ inline void simd_eval_start(const int *soa, size_t n, const RangeQuery &Q, size_
             _mm256_andnot_si256(_mm256_cmpgt_epi32(v_s, v_qend), v_ones)));
         if (mask) {
 #ifdef WORKLOAD_COUNT
+            // returns number of 1s in binary representation
             result += __builtin_popcount(mask);
 #else
             __m256i v_id = _mm256_loadu_si256((const __m256i*)(ids + i));
@@ -467,6 +475,7 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q)
     for (auto l = 0; l < this->numBits; l++)
     {
         // Handle the partition that contains a: consider both originals and replicas, comparisons needed
+        // replica's should comapre because u have no idea about the end of the intervalsin replica 
         size_t nOrg = this->pOrgs[l][a].size();
         simd_eval_both(this->pOrgsSoA[l][a], nOrg, Q, result);
 

@@ -17,8 +17,8 @@ Index
   Num of empty partitions   : 218
   Avg partition size        : 6483.971680
   Read VM [Bytes]           : 102731776
-  Read RSS [Bytes]          : 102760448
-  Indexing time [secs]      : 1.015451
+  Read RSS [Bytes]          : 103022592
+  Indexing time [secs]      : 0.868570
 
 Queries
   Predicate type            : GOVERLAPS
@@ -27,8 +27,8 @@ Queries
   Num of queries            : 20000
   Avg query extent [%]      : 3.555481
   Total result [XOR]        : 41666690213
-  Total querying time [secs]: 1.111398
-  Avg querying time [secs]  : 0.000056
+  Total querying time [secs]: 0.959893
+  Avg querying time [secs]  : 0.000048
 
-  Throughput [queries/sec]  : 17995.347803
+  Throughput [queries/sec]  : 20835.647167
 
