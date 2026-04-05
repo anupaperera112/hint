@@ -48,6 +48,12 @@ private:
     RecordId **pOrgs_sizes;
     size_t   **pReps_sizes;
     
+    // SoA (Structure of Arrays) layout for SIMD acceleration.
+    // Each pOrgsSoA[l][j] points to a block of 3*N ints: [ids|starts|ends].
+    // Only populated by hint_m_simd.cpp; stays nullptr in hint_m.cpp.
+    int ***pOrgsSoA = nullptr;
+    int ***pRepsSoA = nullptr;
+    
     // Construction
     inline void updateCounters(const Record &r);
     inline void updatePartitions(const Record &r);

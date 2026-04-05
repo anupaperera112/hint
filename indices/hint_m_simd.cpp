@@ -29,168 +29,191 @@
  ******************************************************************************/
 
 #include "hint_m.h"
-
 #include <immintrin.h>
 
-inline void simd_eval_both(RelationIterator iterBegin, RelationIterator iterEnd, const RangeQuery &Q, size_t &result) {
-    size_t size = iterEnd - iterBegin;
-    if (size == 0) return;
-    const int* ptr = (const int*)&(*iterBegin);
-    __m256i v_qend = _mm256_set1_epi32(Q.end);
-    __m256i v_qstart = _mm256_set1_epi32(Q.start);
-    __m256i v_offsets_s = _mm256_setr_epi32(1, 4, 7, 10, 13, 16, 19, 22);
-    __m256i v_offsets_e = _mm256_setr_epi32(2, 5, 8, 11, 14, 17, 20, 23);
-#ifndef WORKLOAD_COUNT
-    __m256i v_offsets_id = _mm256_setr_epi32(0, 3, 6, 9, 12, 15, 18, 21);
-#endif
+// ============================================================================
+// SoA-based SIMD helper functions.
+//
+// Each SoA block is laid out as: [ids (N) | starts (N) | ends (N)].
+// Given a pointer `soa` and size `n`:
+//   ids    = soa
+//   starts = soa + n
+//   ends   = soa + 2*n
+//
+// Using contiguous _mm256_loadu_si256 loads (~1 cycle) instead of
+// _mm256_i32gather_epi32 (~12 cycles).
+// ============================================================================
+
+// Evaluate: (start <= Q.end) AND (Q.start <= end)
+inline void simd_eval_both(const int *soa, size_t n, const RangeQuery &Q, size_t &result) {
+    if (n == 0) return;
+    const int *ids    = soa;
+    const int *starts = soa + n;
+    const int *ends   = soa + 2 * n;
+
+    const __m256i v_qend   = _mm256_set1_epi32(Q.end);
+    const __m256i v_qstart = _mm256_set1_epi32(Q.start);
+    const __m256i v_ones   = _mm256_set1_epi32(-1);
 
     size_t i = 0;
-    for (; i + 8 <= size; i += 8) {
-        __m256i vals_s = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_s, 4);
-        __m256i vals_e = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_e, 4);
-        
-        __m256i cmp1 = _mm256_cmpgt_epi32(vals_s, v_qend);
-        cmp1 = _mm256_andnot_si256(cmp1, _mm256_set1_epi32(-1));
-        
-        __m256i cmp2 = _mm256_cmpgt_epi32(v_qstart, vals_e);
-        cmp2 = _mm256_andnot_si256(cmp2, _mm256_set1_epi32(-1));
-        
-        __m256i cmp_res = _mm256_and_si256(cmp1, cmp2);
-        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_res));
+    for (; i + 8 <= n; i += 8) {
+        __m256i v_s = _mm256_loadu_si256((const __m256i*)(starts + i));
+        __m256i v_e = _mm256_loadu_si256((const __m256i*)(ends   + i));
+
+        // start <= Q.end  <=>  NOT(start > Q.end)
+        __m256i cmp1 = _mm256_andnot_si256(_mm256_cmpgt_epi32(v_s, v_qend), v_ones);
+        // Q.start <= end  <=>  NOT(Q.start > end)
+        __m256i cmp2 = _mm256_andnot_si256(_mm256_cmpgt_epi32(v_qstart, v_e), v_ones);
+
+        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_and_si256(cmp1, cmp2)));
         if (mask) {
 #ifdef WORKLOAD_COUNT
             result += __builtin_popcount(mask);
 #else
-            __m256i vals_id = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_id, 4);
-            int ids[8];
-            _mm256_storeu_si256((__m256i*)ids, vals_id);
+            __m256i v_id = _mm256_loadu_si256((const __m256i*)(ids + i));
+            int id_buf[8];
+            _mm256_storeu_si256((__m256i*)id_buf, v_id);
             while (mask) {
-                int tz = __builtin_ctz(mask);
-                result ^= ids[tz];
-                mask &= (mask - 1);
+                result ^= id_buf[__builtin_ctz(mask)];
+                mask &= mask - 1;
             }
 #endif
         }
     }
-    for (; i < size; ++i) {
-        if ((iterBegin[i].start <= Q.end) && (Q.start <= iterBegin[i].end)) {
+    // Scalar tail
+    for (; i < n; ++i) {
+        if ((starts[i] <= Q.end) && (Q.start <= ends[i])) {
 #ifdef WORKLOAD_COUNT
             result++;
 #else
-            result ^= iterBegin[i].id;
+            result ^= ids[i];
 #endif
         }
     }
 }
 
-inline void simd_eval_start(RelationIterator iterBegin, RelationIterator iterEnd, const RangeQuery &Q, size_t &result) {
-    size_t size = iterEnd - iterBegin;
-    if (size == 0) return;
-    const int* ptr = (const int*)&(*iterBegin);
-    __m256i v_qend = _mm256_set1_epi32(Q.end);
-    __m256i v_offsets_s = _mm256_setr_epi32(1, 4, 7, 10, 13, 16, 19, 22);
-#ifndef WORKLOAD_COUNT
-    __m256i v_offsets_id = _mm256_setr_epi32(0, 3, 6, 9, 12, 15, 18, 21);
-#endif
+// Evaluate: start <= Q.end  (end is already guaranteed)
+inline void simd_eval_start(const int *soa, size_t n, const RangeQuery &Q, size_t &result) {
+    if (n == 0) return;
+    const int *ids    = soa;
+    const int *starts = soa + n;
+
+    const __m256i v_qend = _mm256_set1_epi32(Q.end);
+    const __m256i v_ones = _mm256_set1_epi32(-1);
 
     size_t i = 0;
-    for (; i + 8 <= size; i += 8) {
-        __m256i vals_s = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_s, 4);
-        __m256i cmp1 = _mm256_cmpgt_epi32(vals_s, v_qend);
-        __m256i cmp_res = _mm256_andnot_si256(cmp1, _mm256_set1_epi32(-1));
-        
-        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_res));
+    for (; i + 8 <= n; i += 8) {
+        __m256i v_s = _mm256_loadu_si256((const __m256i*)(starts + i));
+        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(
+            _mm256_andnot_si256(_mm256_cmpgt_epi32(v_s, v_qend), v_ones)));
         if (mask) {
 #ifdef WORKLOAD_COUNT
             result += __builtin_popcount(mask);
 #else
-            __m256i vals_id = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_id, 4);
-            int ids[8];
-            _mm256_storeu_si256((__m256i*)ids, vals_id);
+            __m256i v_id = _mm256_loadu_si256((const __m256i*)(ids + i));
+            int id_buf[8];
+            _mm256_storeu_si256((__m256i*)id_buf, v_id);
             while (mask) {
-                int tz = __builtin_ctz(mask);
-                result ^= ids[tz];
-                mask &= (mask - 1);
+                result ^= id_buf[__builtin_ctz(mask)];
+                mask &= mask - 1;
             }
 #endif
         }
     }
-    for (; i < size; ++i) {
-        if (iterBegin[i].start <= Q.end) {
+    for (; i < n; ++i) {
+        if (starts[i] <= Q.end) {
 #ifdef WORKLOAD_COUNT
             result++;
 #else
-            result ^= iterBegin[i].id;
+            result ^= ids[i];
 #endif
         }
     }
 }
 
-inline void simd_eval_end(RelationIterator iterBegin, RelationIterator iterEnd, const RangeQuery &Q, size_t &result) {
-    size_t size = iterEnd - iterBegin;
-    if (size == 0) return;
-    const int* ptr = (const int*)&(*iterBegin);
-    __m256i v_qstart = _mm256_set1_epi32(Q.start);
-    __m256i v_offsets_e = _mm256_setr_epi32(2, 5, 8, 11, 14, 17, 20, 23);
-#ifndef WORKLOAD_COUNT
-    __m256i v_offsets_id = _mm256_setr_epi32(0, 3, 6, 9, 12, 15, 18, 21);
-#endif
+// Evaluate: Q.start <= end  (start is already guaranteed)
+inline void simd_eval_end(const int *soa, size_t n, const RangeQuery &Q, size_t &result) {
+    if (n == 0) return;
+    const int *ids  = soa;
+    const int *ends = soa + 2 * n;
+
+    const __m256i v_qstart = _mm256_set1_epi32(Q.start);
+    const __m256i v_ones   = _mm256_set1_epi32(-1);
 
     size_t i = 0;
-    for (; i + 8 <= size; i += 8) {
-        __m256i vals_e = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_e, 4);
-        __m256i cmp2 = _mm256_cmpgt_epi32(v_qstart, vals_e);
-        __m256i cmp_res = _mm256_andnot_si256(cmp2, _mm256_set1_epi32(-1));
-        
-        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_res));
+    for (; i + 8 <= n; i += 8) {
+        __m256i v_e = _mm256_loadu_si256((const __m256i*)(ends + i));
+        int mask = _mm256_movemask_ps(_mm256_castsi256_ps(
+            _mm256_andnot_si256(_mm256_cmpgt_epi32(v_qstart, v_e), v_ones)));
         if (mask) {
 #ifdef WORKLOAD_COUNT
             result += __builtin_popcount(mask);
 #else
-            __m256i vals_id = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_id, 4);
-            int ids[8];
-            _mm256_storeu_si256((__m256i*)ids, vals_id);
+            __m256i v_id = _mm256_loadu_si256((const __m256i*)(ids + i));
+            int id_buf[8];
+            _mm256_storeu_si256((__m256i*)id_buf, v_id);
             while (mask) {
-                int tz = __builtin_ctz(mask);
-                result ^= ids[tz];
-                mask &= (mask - 1);
+                result ^= id_buf[__builtin_ctz(mask)];
+                mask &= mask - 1;
             }
 #endif
         }
     }
-    for (; i < size; ++i) {
-        if (Q.start <= iterBegin[i].end) {
+    for (; i < n; ++i) {
+        if (Q.start <= ends[i]) {
 #ifdef WORKLOAD_COUNT
             result++;
 #else
-            result ^= iterBegin[i].id;
+            result ^= ids[i];
 #endif
         }
     }
 }
 
-inline void simd_eval_none(RelationIterator iterBegin, RelationIterator iterEnd, size_t &result) {
-    size_t size = iterEnd - iterBegin;
-    if (size == 0) return;
+// No conditions needed – all records in partition are results
+inline void simd_eval_none(const int *soa, size_t n, size_t &result) {
+    if (n == 0) return;
 #ifdef WORKLOAD_COUNT
-    result += size;
+    result += n;
 #else
-    const int* ptr = (const int*)&(*iterBegin);
-    __m256i v_offsets_id = _mm256_setr_epi32(0, 3, 6, 9, 12, 15, 18, 21);
+    const int *ids = soa;
     size_t i = 0;
-    for (; i + 8 <= size; i += 8) {
-        __m256i vals_id = _mm256_i32gather_epi32(ptr + i * 3, v_offsets_id, 4);
-        int ids[8];
-        _mm256_storeu_si256((__m256i*)ids, vals_id);
-        result ^= ids[0] ^ ids[1] ^ ids[2] ^ ids[3] ^ ids[4] ^ ids[5] ^ ids[6] ^ ids[7];
+    for (; i + 8 <= n; i += 8) {
+        __m256i v_id = _mm256_loadu_si256((const __m256i*)(ids + i));
+        int id_buf[8];
+        _mm256_storeu_si256((__m256i*)id_buf, v_id);
+        result ^= id_buf[0] ^ id_buf[1] ^ id_buf[2] ^ id_buf[3]
+                 ^ id_buf[4] ^ id_buf[5] ^ id_buf[6] ^ id_buf[7];
     }
-    for (; i < size; ++i) {
-        result ^= iterBegin[i].id;
-    }
+    for (; i < n; ++i)
+        result ^= ids[i];
 #endif
 }
 
 
+// ============================================================================
+// Helper: build a SoA block from a Relation (vector<Record>).
+// Layout: [ids (N) | starts (N) | ends (N)]
+// ============================================================================
+static int* buildSoABlock(const Relation &rel) {
+    size_t n = rel.size();
+    if (n == 0) return nullptr;
+    int *block = new int[3 * n];
+    int *ids    = block;
+    int *starts = block + n;
+    int *ends   = block + 2 * n;
+    for (size_t k = 0; k < n; k++) {
+        ids[k]    = rel[k].id;
+        starts[k] = rel[k].start;
+        ends[k]   = rel[k].end;
+    }
+    return block;
+}
+
+
+// ============================================================================
+// Construction helpers (identical to base hint_m.cpp)
+// ============================================================================
 
 inline void HINT_M::updateCounters(const Record &r)
 {
@@ -291,9 +314,13 @@ inline void HINT_M::updatePartitions(const Record &r)
 HINT_M::HINT_M(const Relation &R, const unsigned int numBits, const unsigned int maxBits) : HierarchicalIndex(R, numBits, maxBits)
 {
     // Step 1: one pass to count the contents inside each partition.
+    //to store the only sizes of each partition from the relation data 
+    //mallocs for each level
     this->pOrgs_sizes = (RecordId **)malloc(this->height * sizeof(RecordId *));
     this->pReps_sizes = (size_t **)malloc(this->height * sizeof(size_t *));
 
+
+    // allocate space for each partionon inside the level 
     for (auto l = 0; l < this->height; l++)
     {
         auto cnt = (int)(pow(2, this->numBits - l));
@@ -303,10 +330,11 @@ HINT_M::HINT_M(const Relation &R, const unsigned int numBits, const unsigned int
         this->pReps_sizes[l] = (size_t *)calloc(cnt, sizeof(size_t));
     }
 
+    // filling the correct sizes 
     for (const Record &r : R)
         this->updateCounters(r);
 
-    // Step 2: allocate necessary memory.
+    // Step 2: allocate necessary memory using the porg sizes and preplsizes 
     this->pOrgs = new Relation *[this->height];
     this->pReps = new Relation *[this->height];
     for (auto l = 0; l < this->height; l++)
@@ -333,6 +361,22 @@ HINT_M::HINT_M(const Relation &R, const unsigned int numBits, const unsigned int
     // Step 3: fill partitions.
     for (const Record &r : R)
         this->updatePartitions(r);
+
+    // Step 4: Build SoA (Structure of Arrays) layout for SIMD.
+    // Convert each partition from AoS (Record[]) to SoA (int[3*N]).
+    this->pOrgsSoA = new int**[this->height];
+    this->pRepsSoA = new int**[this->height];
+    for (auto l = 0; l < this->height; l++)
+    {
+        auto cnt = (int)(pow(2, this->numBits - l));
+        this->pOrgsSoA[l] = new int*[cnt];
+        this->pRepsSoA[l] = new int*[cnt];
+        for (auto j = 0; j < cnt; j++)
+        {
+            this->pOrgsSoA[l][j] = buildSoABlock(this->pOrgs[l][j]);
+            this->pRepsSoA[l][j] = buildSoABlock(this->pReps[l][j]);
+        }
+    }
 
     // Free auxiliary memory.
     for (auto l = 0; l < this->height; l++)
@@ -386,6 +430,24 @@ void HINT_M::getStats()
 
 HINT_M::~HINT_M()
 {
+    // Free SoA arrays
+    if (this->pOrgsSoA)
+    {
+        for (auto l = 0; l < this->height; l++)
+        {
+            auto cnt = (int)(pow(2, this->numBits - l));
+            for (auto j = 0; j < cnt; j++)
+            {
+                delete[] this->pOrgsSoA[l][j];
+                delete[] this->pRepsSoA[l][j];
+            }
+            delete[] this->pOrgsSoA[l];
+            delete[] this->pRepsSoA[l];
+        }
+        delete[] this->pOrgsSoA;
+        delete[] this->pRepsSoA;
+    }
+
     for (auto l = 0; l < this->height; l++)
     {
         delete[] this->pOrgs[l];
@@ -399,35 +461,30 @@ HINT_M::~HINT_M()
 size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q)
 {
     size_t result = 0;
-    RelationIterator iter, iterBegin, iterEnd;
     Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
     Timestamp b = Q.end >> (this->maxBits - this->numBits);   // prefix
 
     for (auto l = 0; l < this->numBits; l++)
     {
         // Handle the partition that contains a: consider both originals and replicas, comparisons needed
-        iterBegin = this->pOrgs[l][a].begin();
-        iterEnd = this->pOrgs[l][a].end();
-        simd_eval_both(iterBegin, iterEnd, Q, result);
+        size_t nOrg = this->pOrgs[l][a].size();
+        simd_eval_both(this->pOrgsSoA[l][a], nOrg, Q, result);
 
-        iterBegin = this->pReps[l][a].begin();
-        iterEnd = this->pReps[l][a].end();
-        simd_eval_both(iterBegin, iterEnd, Q, result);
+        size_t nRep = this->pReps[l][a].size();
+        simd_eval_both(this->pRepsSoA[l][a], nRep, Q, result);
 
         if (a < b)
         {
             // Handle the rest before the partition that contains b: consider only originals, no comparisons needed
             for (auto j = a + 1; j < b; j++)
             {
-                iterBegin = this->pOrgs[l][j].begin();
-                iterEnd = this->pOrgs[l][j].end();
-                simd_eval_none(iterBegin, iterEnd, result);
+                size_t n = this->pOrgs[l][j].size();
+                simd_eval_none(this->pOrgsSoA[l][j], n, result);
             }
 
             // Handle the partition that contains b: consider only originals, comparisons needed
-            iterBegin = this->pOrgs[l][b].begin();
-            iterEnd = this->pOrgs[l][b].end();
-            simd_eval_start(iterBegin, iterEnd, Q, result);
+            size_t nB = this->pOrgs[l][b].size();
+            simd_eval_start(this->pOrgsSoA[l][b], nB, Q, result);
         }
 
         a >>= 1; // a = a div 2
@@ -435,9 +492,8 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q)
     }
 
     // Handle root: consider only originals, comparisons needed
-    iterBegin = this->pOrgs[this->numBits][0].begin();
-    iterEnd = this->pOrgs[this->numBits][0].end();
-    simd_eval_both(iterBegin, iterEnd, Q, result);
+    size_t nRoot = this->pOrgs[this->numBits][0].size();
+    simd_eval_both(this->pOrgsSoA[this->numBits][0], nRoot, Q, result);
 
     return result;
 }
@@ -445,7 +501,6 @@ size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q)
 size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
 {
     size_t result = 0;
-    RelationIterator iter, iterBegin, iterEnd;
     Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
     Timestamp b = Q.end >> (this->maxBits - this->numBits);   // prefix
     bool foundzero = false;
@@ -459,16 +514,14 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
             // all contents are guaranteed to be results
 
             // Handle the partition that contains a: consider both originals and replicas
-            iterBegin = this->pReps[l][a].begin();
-            iterEnd = this->pReps[l][a].end();
-            simd_eval_none(iterBegin, iterEnd, result);
+            size_t nRep = this->pReps[l][a].size();
+            simd_eval_none(this->pRepsSoA[l][a], nRep, result);
 
             // Handle rest: consider only originals
             for (auto j = a; j <= b; j++)
             {
-                iterBegin = this->pOrgs[l][j].begin();
-                iterEnd = this->pOrgs[l][j].end();
-                simd_eval_none(iterBegin, iterEnd, result);
+                size_t n = this->pOrgs[l][j].size();
+                simd_eval_none(this->pOrgsSoA[l][j], n, result);
             }
         }
         else
@@ -478,56 +531,44 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
             // Handle the partition that contains a: consider both originals and replicas, comparisons needed
             if (a == b)
             {
+                size_t nOrg = this->pOrgs[l][a].size();
                 // Special case when query overlaps only one partition, Lemma 3
                 if (!foundzero && !foundone)
                 {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    simd_eval_both(iterBegin, iterEnd, Q, result);
+                    simd_eval_both(this->pOrgsSoA[l][a], nOrg, Q, result);
                 }
                 else if (foundzero)
                 {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    simd_eval_start(iterBegin, iterEnd, Q, result);
+                    simd_eval_start(this->pOrgsSoA[l][a], nOrg, Q, result);
                 }
                 else if (foundone)
                 {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    simd_eval_end(iterBegin, iterEnd, Q, result);
+                    simd_eval_end(this->pOrgsSoA[l][a], nOrg, Q, result);
                 }
             }
             else
             {
+                size_t nOrg = this->pOrgs[l][a].size();
                 // Lemma 1
                 if (!foundzero)
                 {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    simd_eval_end(iterBegin, iterEnd, Q, result);
+                    simd_eval_end(this->pOrgsSoA[l][a], nOrg, Q, result);
                 }
                 else
                 {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    simd_eval_none(iterBegin, iterEnd, result);
+                    simd_eval_none(this->pOrgsSoA[l][a], nOrg, result);
                 }
             }
 
             // Lemma 1, 3
+            size_t nRep = this->pReps[l][a].size();
             if (!foundzero)
             {
-                // TODO with
-                iterBegin = this->pReps[l][a].begin();
-                iterEnd = this->pReps[l][a].end();
-                simd_eval_end(iterBegin, iterEnd, Q, result);
+                simd_eval_end(this->pRepsSoA[l][a], nRep, Q, result);
             }
             else
             {
-                iterBegin = this->pReps[l][a].begin();
-                iterEnd = this->pReps[l][a].end();
-                simd_eval_none(iterBegin, iterEnd, result);
+                simd_eval_none(this->pRepsSoA[l][a], nRep, result);
             }
 
             if (a < b)
@@ -537,23 +578,20 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
                     // Handle the rest before the partition that contains b: consider only originals, no comparisons needed
                     for (auto j = a + 1; j < b; j++)
                     {
-                        iterBegin = this->pOrgs[l][j].begin();
-                        iterEnd = this->pOrgs[l][j].end();
-                        simd_eval_none(iterBegin, iterEnd, result);
+                        size_t n = this->pOrgs[l][j].size();
+                        simd_eval_none(this->pOrgsSoA[l][j], n, result);
                     }
 
                     // Handle the partition that contains b: consider only originals, comparisons needed
-                    iterBegin = this->pOrgs[l][b].begin();
-                    iterEnd = this->pOrgs[l][b].end();
-                    simd_eval_start(iterBegin, iterEnd, Q, result);
+                    size_t nB = this->pOrgs[l][b].size();
+                    simd_eval_start(this->pOrgsSoA[l][b], nB, Q, result);
                 }
                 else
                 {
                     for (auto j = a + 1; j <= b; j++)
                     {
-                        iterBegin = this->pOrgs[l][j].begin();
-                        iterEnd = this->pOrgs[l][j].end();
-                        simd_eval_none(iterBegin, iterEnd, result);
+                        size_t n = this->pOrgs[l][j].size();
+                        simd_eval_none(this->pOrgsSoA[l][j], n, result);
                     }
                 }
             }
@@ -568,19 +606,16 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
     }
 
     // Handle root.
+    size_t nRoot = this->pOrgs[this->numBits][0].size();
     if (foundone && foundzero)
     {
         // All contents are guaranteed to be results
-        iterBegin = this->pOrgs[this->numBits][0].begin();
-        iterEnd = this->pOrgs[this->numBits][0].end();
-        simd_eval_none(iterBegin, iterEnd, result);
+        simd_eval_none(this->pOrgsSoA[this->numBits][0], nRoot, result);
     }
     else
     {
         // Comparisons needed
-        iterBegin = this->pOrgs[this->numBits][0].begin();
-        iterEnd = this->pOrgs[this->numBits][0].end();
-        simd_eval_both(iterBegin, iterEnd, Q, result);
+        simd_eval_both(this->pOrgsSoA[this->numBits][0], nRoot, Q, result);
     }
 
     return result;
