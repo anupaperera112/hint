@@ -1,10 +1,13 @@
 #include <cmath>
 #include <iostream>
+#include <mutex>
+#include <vector>
 #define DUCKDB_EXTENSION_MAIN
 
 #include "hint_extension.hpp"
 #include "duckdb.hpp"
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/function/scalar_function.hpp"
 
 // Include your HINT^m files
 #include "relation.h"
@@ -12,53 +15,120 @@
 
 namespace duckdb {
 
-// ---------------------------------------------------------
-// 1. STATE OBJECT: Keeps HINT^m loaded in memory 
-// ---------------------------------------------------------
-struct HintIndexState : public GlobalTableFunctionState {
-    ::Relation R;
-    ::HINT_M* index; // Pointer to your HINT^m index
+// =========================================================================
+// HINT+ GLOBAL STATE (Enhancement 1: HUD Architecture)
+// =========================================================================
+static std::mutex g_HintMutex;
+static std::unique_ptr<::Relation> g_MainRelation;
+static std::unique_ptr<::HINT_M> g_MainIndex;
+static std::vector<::Record> g_DeltaLog;
+static ::RecordId g_NextRecordId = 1;
 
-    HintIndexState() {
-        std::cout << "Loading dataset..." << std::endl;
-        
-        // Use an absolute path or correct relative path to where duckdb is executed from
-        R.load("../samples/AARHUS-BOOKS_2013.dat");
-        
-        if (R.size() == 0) {
-            std::cerr << "CRITICAL ERROR: Dataset is empty! The file path is totally wrong." << std::endl;
-        } else {
-             std::cout << "Data successfully loaded: " << R.size() << " records." << std::endl;
-             size_t maxBits = int(log2(R.gend-R.gstart)+1); size_t numBits = 10;
-             index = new ::HINT_M(R, numBits, maxBits);
-             std::cout << "HINT_M index built successfully." << std::endl;
-        }
-    }
+// =========================================================================
+// 1. hint_insert(start, end) -> BIGINT
+// O(1) insertion directly into the Delta Log.
+// =========================================================================
+static void HintInsertFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &start_vector = args.data[0];
+    auto &end_vector = args.data[1];
+
+    std::lock_guard<std::mutex> lock(g_HintMutex);
     
-    // Clean up memory when DB closes
-    ~HintIndexState() {
-        if (index) delete index;
-    }
-};
-
-unique_ptr<GlobalTableFunctionState> InitHintState(ClientContext &context, TableFunctionInitInput &input) {
-    return make_uniq<HintIndexState>();
+    BinaryExecutor::Execute<int64_t, int64_t, int64_t>(
+        start_vector, end_vector, result, args.size(),
+        [&](int64_t start_time, int64_t end_time) {
+            ::RecordId id = g_NextRecordId++;
+            g_DeltaLog.emplace_back(id, start_time, end_time);
+            return id;
+        });
 }
 
-// ---------------------------------------------------------
-// 2. EXECUTION LOGIC: What to do when a query hits
-// ---------------------------------------------------------
+// =========================================================================
+// 2. hint_merge() -> VARCHAR
+// Lazy Merge mechanism for HINT+ Component Architecture
+// =========================================================================
+static void HintMergeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    std::lock_guard<std::mutex> lock(g_HintMutex);
+    
+    if (!g_MainRelation) {
+        g_MainRelation = make_uniq<::Relation>();
+        g_MainRelation->gstart = std::numeric_limits<::Timestamp>::max();
+        g_MainRelation->gend = std::numeric_limits<::Timestamp>::min();
+        g_MainRelation->longestRecord = 0;
+    }
+
+    size_t delta_size = g_DeltaLog.size();
+    if (delta_size == 0) {
+        result.SetValue(0, Value("No delta log records to merge."));
+        return;
+    }
+
+    size_t sum = 0;
+    // Push everything from delta log to MainRelation
+    for (const auto& rec : g_DeltaLog) {
+        g_MainRelation->push_back(rec);
+        g_MainRelation->gstart = std::min(g_MainRelation->gstart, rec.start);
+        g_MainRelation->gend   = std::max(g_MainRelation->gend  , rec.end);
+        g_MainRelation->longestRecord = std::max(g_MainRelation->longestRecord, rec.end - rec.start + 1);
+        sum += (rec.end - rec.start);
+    }
+    
+    g_MainRelation->avgRecordExtent = (float)sum / g_MainRelation->size();
+    g_MainRelation->sortByStart();
+    g_DeltaLog.clear();
+
+    // Rebuild the index completely (Adaptive M tuning goes here later)
+    size_t maxBits = (g_MainRelation->gend > 0) ? int(log2(g_MainRelation->gend) + 1) : 1; 
+    size_t numBits = 10;
+    
+    // Clean up old index
+    try {
+        g_MainIndex = make_uniq<::HINT_M>(*g_MainRelation, numBits, maxBits);
+    } catch (...) {
+        result.SetValue(0, Value("Error building index"));
+        return;
+    }
+    
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "Merged %zu delta items. Main index now holds %zu records.", delta_size, g_MainRelation->size());
+    
+    for (idx_t i = 0; i < args.size(); i++) {
+        result.SetValue(i, Value(buffer));
+    }
+}
+
+
+// =========================================================================
+// 3. hint_search(start, end) -> TABLE(count BIGINT)
+// Scans both HINT Main Index and Delta Log
+// =========================================================================
+struct HintSearchBindData : public TableFunctionData {
+    int64_t start_time;
+    int64_t end_time;
+
+    HintSearchBindData(int64_t start, int64_t end) : start_time(start), end_time(end) {}
+};
+
+unique_ptr<FunctionData> HintSearchBind(ClientContext &context, TableFunctionBindInput &input,
+                                  vector<LogicalType> &return_types, vector<string> &names) {
+    names.push_back("overlapping_ids");
+    return_types.push_back(LogicalType::BIGINT);
+    return make_uniq<HintSearchBindData>(input.inputs[0].GetValue<int64_t>(), input.inputs[1].GetValue<int64_t>());
+}
 
 struct HintLocalState : public LocalTableFunctionState {
     bool done = false;
 };
+
+unique_ptr<GlobalTableFunctionState> InitHintState(ClientContext &context, TableFunctionInitInput &input) {
+    return make_uniq<GlobalTableFunctionState>();
+}
 
 unique_ptr<LocalTableFunctionState> InitHintLocalState(ExecutionContext &context, TableFunctionInitInput &input, GlobalTableFunctionState *global_state) {
     return make_uniq<HintLocalState>();
 }
 
 void HintSearchOp(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-    auto &state = data_p.global_state->Cast<HintIndexState>();
     auto &lstate = data_p.local_state->Cast<HintLocalState>();
 
     if (lstate.done) {
@@ -66,41 +136,49 @@ void HintSearchOp(ClientContext &context, TableFunctionInput &data_p, DataChunk 
         return;
     }
 
-    // 1. Grab the start & end timestamps the user typed in their SQL Query
-    auto &start_input = data_p.bind_data->Cast<TableFunctionData>();
-    ::Timestamp start_time = output.data[0].GetValue(0).GetValue<int64_t>(); // (Placeholder implementation tweak for full bind data)
-
-    // For a single query test, we'll extract directly from the execution state via a fixed query
+    auto &bind_data = data_p.bind_data->Cast<HintSearchBindData>();
     ::RangeQuery Q;
-    Q.start = 1356994800; // Let's hardcode a known interval for a quick test
-    Q.end   = 1357081200;
+    Q.start = bind_data.start_time;
+    Q.end   = bind_data.end_time;
 
-    // 2. EXECUTE YOUR HINT^M WIZARDRY!!
-    size_t overlapping_results = state.index->execute_gOverlaps(Q);
+    size_t overlapping_results = 0;
+    
+    std::lock_guard<std::mutex> lock(g_HintMutex);
 
-    // 3. Return the result to the SQL console
+    // 1. Query the main index
+    if (g_MainIndex) {
+        overlapping_results += g_MainIndex->execute_gOverlaps(Q);
+    }
+
+    // 2. Scan the Delta Log (simulating enhancement 1 pipeline)
+    for (const auto& rec : g_DeltaLog) {
+        // Condition for interval overlap: (A.start <= B.end) AND (A.end >= B.start)
+        if (rec.start <= Q.end && rec.end >= Q.start) {
+            overlapping_results++;
+        }
+    }
+
     output.SetCardinality(1);
     output.SetValue(0, 0, Value::BIGINT(overlapping_results)); 
     lstate.done = true;
 }
 
-// ---------------------------------------------------------
-// 3. DATABASE BINDING: Tells SQL what to expect
-// ---------------------------------------------------------
-unique_ptr<FunctionData> HintBind(ClientContext &context, TableFunctionBindInput &input,
-                                  vector<LogicalType> &return_types, vector<string> &names) {
-    // We are returning a column of results named "overlapping_ids"
-    names.push_back("overlapping_ids");
-    return_types.push_back(LogicalType::BIGINT);
-    return make_uniq<TableFunctionData>();
-}
-// ---------------------------------------------------------
-// 4. REGISTRATION: Exposing it to DuckDB at boot
-// ---------------------------------------------------------
+
+// =========================================================================
+// REGISTRATION
+// =========================================================================
 static void LoadInternal(ExtensionLoader &loader) {
-    // We add two input parameters: BIGINT (start) and BIGINT (end)
+    // Scalar function for insert
+    ScalarFunction hint_insert("hint_insert", {LogicalType::BIGINT, LogicalType::BIGINT}, LogicalType::BIGINT, HintInsertFunction);
+    loader.RegisterFunction(hint_insert);
+
+    // Scalar function to trigger merge
+    ScalarFunction hint_merge("hint_merge", {}, LogicalType::VARCHAR, HintMergeFunction);
+    loader.RegisterFunction(hint_merge);
+
+    // Table function to search
     TableFunction hint_search_func("hint_search", {LogicalType::BIGINT, LogicalType::BIGINT}, 
-                                   HintSearchOp, HintBind, InitHintState, InitHintLocalState);
+                                   HintSearchOp, HintSearchBind, InitHintState, InitHintLocalState);
     loader.RegisterFunction(hint_search_func);
 }
 
