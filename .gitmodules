@@ -1,0 +1,8 @@
+[submodule "hint_duckdb_ext/duckdb"]
+	path = hint_duckdb_ext/duckdb
+	url = https://github.com/duckdb/duckdb
+	branch = main
+[submodule "hint_duckdb_ext/extension-ci-tools"]
+	path = hint_duckdb_ext/extension-ci-tools
+	url = https://github.com/duckdb/extension-ci-tools
+	branch = main

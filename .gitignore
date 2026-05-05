@@ -1,3 +1,28 @@
+# Build artifacts
+/build/
+/duckdb/build/
+/hint_duckdb_ext/build/
+
+# vcpkg artifacts
+/vcpkg/
+
+# Binary and object files
+*.o
+*.so
+*.dylib
+*.exe
+*.exec
+*.log
+*.cache
+*.tar.gz
+*.zip
+
+# DuckDB extension output
+*.duckdb_extension
+
+# IDE and OS
+.vscode/
+.DS_Store
 # Binaries
 *.o
 *.a
