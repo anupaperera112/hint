@@ -48,8 +48,23 @@ unique_ptr<GlobalTableFunctionState> InitHintState(ClientContext &context, Table
 // ---------------------------------------------------------
 // 2. EXECUTION LOGIC: What to do when a query hits
 // ---------------------------------------------------------
+
+struct HintLocalState : public LocalTableFunctionState {
+    bool done = false;
+};
+
+unique_ptr<LocalTableFunctionState> InitHintLocalState(ExecutionContext &context, TableFunctionInitInput &input, GlobalTableFunctionState *global_state) {
+    return make_uniq<HintLocalState>();
+}
+
 void HintSearchOp(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
     auto &state = data_p.global_state->Cast<HintIndexState>();
+    auto &lstate = data_p.local_state->Cast<HintLocalState>();
+
+    if (lstate.done) {
+        output.SetCardinality(0);
+        return;
+    }
 
     // 1. Grab the start & end timestamps the user typed in their SQL Query
     auto &start_input = data_p.bind_data->Cast<TableFunctionData>();
@@ -66,6 +81,7 @@ void HintSearchOp(ClientContext &context, TableFunctionInput &data_p, DataChunk 
     // 3. Return the result to the SQL console
     output.SetCardinality(1);
     output.SetValue(0, 0, Value::BIGINT(overlapping_results)); 
+    lstate.done = true;
 }
 
 // ---------------------------------------------------------
@@ -84,7 +100,7 @@ unique_ptr<FunctionData> HintBind(ClientContext &context, TableFunctionBindInput
 static void LoadInternal(ExtensionLoader &loader) {
     // We add two input parameters: BIGINT (start) and BIGINT (end)
     TableFunction hint_search_func("hint_search", {LogicalType::BIGINT, LogicalType::BIGINT}, 
-                                   HintSearchOp, HintBind, InitHintState);
+                                   HintSearchOp, HintBind, InitHintState, InitHintLocalState);
     loader.RegisterFunction(hint_search_func);
 }
 
