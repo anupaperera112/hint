@@ -1,11 +1,12 @@
-# Hint
+# HINT+ DB Wrapper for DuckDB
 
-This repository is based on https://github.com/duckdb/extension-template, check it out if you want to build and ship your own DuckDB extension.
+This extension integrates the **HINT+** (Hierarchical Interval) index architecture as a Database Wrapper for DuckDB. It implements a **Horizontal Update-Driven (HUD)** storage layout to support fast, LSM-like interval inserts without constantly reconstructing the static HINT main index.
 
----
-
-This extension, Hint, allow you to ... <extension_goal>.
-
+## Architecture Highlights
+- **Delta Log:** A fast append-only `std::vector` (in-memory) that ingests newly inserted intervals instantly in $O(1)$ time. 
+- **Main Index:** A static HINT `HINT_M` index (written in C++) that holds the widely queried historical data.
+- **Concurrent Search:** Querying for interval overlaps dynamically retrieves results by combining the static Main Index matches with the active Delta Log matches. 
+- **Deferred Merging:** Manual merge triggers recalculate and flush the active Delta Log structurally into a brand-new updated Main Index to keep search performance optimal over time.
 
 ## Cloning and Building
 
@@ -17,117 +18,48 @@ git clone --recursive <your_repo_url>
 # git submodule update --init --recursive
 ```
 
-### Managing dependencies
-DuckDB extensions uses VCPKG for dependency management. Enabling VCPKG is very simple: follow the [installation instructions](https://vcpkg.io/en/getting-started) or just run the following:
-```shell
-git clone https://github.com/Microsoft/vcpkg.git
-./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
-
 ### Build steps
-Now to build the extension, run:
+To build the extension, run:
 ```sh
 make
 ```
-The main binaries that will be built are:
+
+## Running the Extension
+
+Start the DuckDB shell with the compiled extension loaded:
 ```sh
 ./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/hint/hint.duckdb_extension
-```
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `hint.duckdb_extension` is the loadable binary as it would be distributed.
-
-## Running the extension
-To run the extension code, simply start the shell with `./build/release/duckdb`.
-
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `hint()` that takes a string arguments and returns a string:
-```
-D select hint('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Hint Jane 🐥 │
-└───────────────┘
 ```
 
-## Running the tests
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
-```sh
-make test
-```
+### SQL API
 
-### Installing the deployed binaries
-To install your extension binaries from S3, you will need to do two things. Firstly, DuckDB should be launched with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. Some examples:
+Because we are creating a DB shell around a specialized C++ memory structure without altering DuckDB's deeply internal storage engine catalog, all HINT+ operations are mapped to DuckDB **Scalar** and **Table Functions** using `SELECT`.
 
-CLI:
-```shell
-duckdb -unsigned
-```
-
-Python:
-```python
-con = duckdb.connect(':memory:', config={'allow_unsigned_extensions' : 'true'})
-```
-
-NodeJS:
-```js
-db = new duckdb.Database(':memory:', {"allow_unsigned_extensions": "true"});
-```
-
-Secondly, you will need to set the repository endpoint in DuckDB to the HTTP url of your bucket + version of the extension
-you want to install. To do this run the following SQL query in DuckDB:
+#### 1. Inserting Data (Delta Log)
+Inserts data into the fast-append Delta Log buffer. Returns the assigned item ID.
 ```sql
-SET custom_extension_repository='bucket.s3.eu-west-1.amazonaws.com/<your_extension_name>/latest';
+SELECT hint_insert(start_interval, end_interval);
 ```
-Note that the `/latest` path will allow you to install the latest extension version available for your current version of
-DuckDB. To specify a specific version, you can pass the version instead.
-
-After running these steps, you can install and load your extension using the regular INSTALL/LOAD commands in DuckDB:
+Example:
 ```sql
-INSTALL hint;
-LOAD hint;
+SELECT hint_insert(10, 50);
 ```
 
-## Setting up CLion
-
-### Opening project
-Configuring CLion with this extension requires a little work. Firstly, make sure that the DuckDB submodule is available.
-Then make sure to open `./duckdb/CMakeLists.txt` (so not the top level `CMakeLists.txt` file from this repo) as a project in CLion.
-Now to fix your project path go to `tools->CMake->Change Project Root`([docs](https://www.jetbrains.com/help/clion/change-project-root-directory.html)) to set the project root to the root dir of this repo.
-
-### Debugging
-To set up debugging in CLion, there are two simple steps required. Firstly, in `CLion -> Settings / Preferences -> Build, Execution, Deploy -> CMake` you will need to add the desired builds (e.g. Debug, Release, RelDebug, etc). There's different ways to configure this, but the easiest is to leave all empty, except the `build path`, which needs to be set to `../build/{build type}`, and CMake Options to which the following flag should be added, with the path to the extension CMakeList:
-
-```
--DDUCKDB_EXTENSION_CONFIGS=<path_to_the_exentension_CMakeLists.txt>
+#### 2. Querying Overlaps (Concurrent Index Search)
+Returns the total count of intervals that overlap with the queried `[start, end]`. This seamlessly triggers a scan of both the static Main Index and the active Delta Log.
+```sql
+SELECT * FROM hint_search(query_start, query_end);
 ```
 
-The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
+#### 3. Merging (Compaction)
+Compacts the active Delta Log into the Main HINT Index and clears the Delta Log. Useful to execute periodically for deep query performance.
+```sql
+SELECT hint_merge();
+```
 
-## Packaging and preparing for repo
-
-To prepare the wrapper for pushing or distribution, use the packaging script at `scripts/package_extension.sh` which creates a tarball of the repository (excluding common build artifacts).
-
-From the repository root run:
-
+## Running Tests
+You can run the end-to-end integration test file locally to verify the DB wrapper logic:
 ```sh
-chmod +x scripts/package_extension.sh
-scripts/package_extension.sh
+./build/release/duckdb < test_wrapper.sql
 ```
-
-This will produce a `hint-extension-<timestamp>.tar.gz` file. To push the source to your git remote, commit the tracked files and push as usual:
-
-```sh
-git add .
-git commit -m "Prepare hint extension for repo"
-git push origin main
-```
-
-If you want me to run the packaging and push to a specific remote/branch, tell me the remote name and branch and I can run the commands for you.
-
+This tests Inserts, searches out of the Delta Log, the Merge runtime, and resolving Mixed Searches automatically.
