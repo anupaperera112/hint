@@ -8,3 +8,61 @@ query I
 SELECT * FROM hint_search(1356994800, 1357081200);
 ----
 0
+
+======================================
+
+# 1. Insert records into the Delta Log
+query I
+SELECT hint_insert(10, 20);
+----
+1
+
+query I
+SELECT hint_insert(15, 30);
+----
+2
+
+query I
+SELECT hint_insert(80, 100);
+----
+3
+
+# 2. Search exclusively from the Delta Log (no merge yet)
+# Expected: Overlaps with [10,20] and [15,30]
+query I
+SELECT * FROM hint_search(12, 18);
+----
+2
+
+# 3. Merge the Delta Log into the Main Index
+# This tests our live statistics tracking and index build.
+query I
+SELECT hint_merge();
+----
+Merged 3 delta items. Main index now holds 3 records.
+
+# 4. Search exclusively from the Main Index
+# Expected: Overlaps with [80,100]
+query I
+SELECT * FROM hint_search(90, 110);
+----
+1
+
+# 5. Mixed Search (Delta Log + Main Index)
+# Insert a new record into Delta Log
+query I
+SELECT hint_insert(55, 65);
+----
+4
+
+# Search spans both Main Index [80,100] and Delta Log [55,65]
+query I
+SELECT * FROM hint_search(50, 95);
+----
+2
+
+# 6. Final Merge
+query I
+SELECT hint_merge();
+----
+Merged 1 delta items. Main index now holds 4 records.
