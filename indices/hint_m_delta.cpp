@@ -118,8 +118,7 @@ void HINT_M_Dynamic::remove(RecordId id) {
 }
 
 void HINT_M_Dynamic::update(RecordId id, Timestamp newStart, Timestamp newEnd) {
-  // Step 1: Soft-delete the old record
-  // Remove from deltaInserts if present
+  // Step 1: Remove old version from deltaInserts if present
   for (size_t i = 0; i < this->deltaInserts.size(); i++) {
     if (this->deltaInserts[i].id == id) {
       this->deltaInserts[i] = this->deltaInserts.back();
@@ -127,17 +126,15 @@ void HINT_M_Dynamic::update(RecordId id, Timestamp newStart, Timestamp newEnd) {
       break;
     }
   }
-  // Mark as deleted in the main index
+
+  // Step 2: Mark as deleted in the main index (keeps old version filtered)
   this->deltaDeletes.insert(id);
 
-  // Step 2: Insert the replacement record with the SAME id
-  Record updatedRec(id, newStart, newEnd);
-
-  // Undo the delete we just did (insert re-uses the same ID)
-  this->deltaDeletes.erase(id);
-
-  // Add to the delta insert buffer
-  this->deltaInserts.push_back(updatedRec);
+  // Step 3: Add updated record to deltaInserts
+  // DO NOT remove from deltaDeletes — we need it to mask the old version
+  // in the main index. The query path does not filter deltaInserts against
+  // deltaDeletes, so the new record will still be returned.
+  this->deltaInserts.push_back(Record(id, newStart, newEnd));
 
   // Auto-merge if thresholds are met
   if (this->needsMerge())
@@ -264,10 +261,9 @@ Relation HINT_M_Dynamic::executeTopDown_gOverlaps_Records(RangeQuery Q) {
                  result.end());
   }
 
-  // Add delta inserts that overlap and are not deleted
+  // Add delta inserts that overlap (no deltaDeletes check needed —
+  // anything in deltaInserts was intentionally placed there)
   for (const Record &r : this->deltaInserts) {
-    if (this->deltaDeletes.count(r.id) > 0)
-      continue;
     if ((r.start <= Q.end) && (Q.start <= r.end))
       result.push_back(r);
   }
@@ -289,10 +285,9 @@ Relation HINT_M_Dynamic::executeBottomUp_gOverlaps_Records(RangeQuery Q) {
                  result.end());
   }
 
-  // Add delta inserts that overlap and are not deleted
+  // Add delta inserts that overlap (no deltaDeletes check needed —
+  // anything in deltaInserts was intentionally placed there)
   for (const Record &r : this->deltaInserts) {
-    if (this->deltaDeletes.count(r.id) > 0)
-      continue;
     if ((r.start <= Q.end) && (Q.start <= r.end))
       result.push_back(r);
   }
@@ -337,23 +332,22 @@ size_t HINT_M_Dynamic::executeBottomUp_gOverlaps(RangeQuery Q) {
 
 void HINT_M_Dynamic::collectBottomUp_gOverlaps(RangeQuery Q,
                                                std::vector<RecordId> &result) {
-  if (this->deltaDeletes.empty()) {
-    // Fast path: no deletes pending, use HINT^m collect directly
-    this->mainIndex->collectBottomUp_gOverlaps(Q, result);
-  } else {
-    // Slow path: scan base relation, skip deleted IDs
-    for (const Record &r : this->baseRelation) {
-      if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-        continue;
-      if ((r.start <= Q.end) && (Q.start <= r.end))
-        result.push_back(r.id);
-    }
+  // Always use the HINT^m index (fast indexed lookup)
+  this->mainIndex->collectBottomUp_gOverlaps(Q, result);
+
+  // Filter out deleted IDs from main index results
+  if (!this->deltaDeletes.empty()) {
+    auto &deletes = this->deltaDeletes;
+    result.erase(
+        std::remove_if(result.begin(), result.end(),
+                       [&deletes](RecordId id) {
+                         return deletes.count(id) > 0;
+                       }),
+        result.end());
   }
 
-  // Scan delta inserts
+  // Scan delta inserts (no deltaDeletes check needed)
   for (const Record &r : this->deltaInserts) {
-    if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-      continue;
     if ((r.start <= Q.end) && (Q.start <= r.end))
       result.push_back(r.id);
   }

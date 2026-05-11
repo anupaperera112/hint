@@ -70,6 +70,9 @@ public:
   // Virtual overrides returning size_t (used via HierarchicalIndex pointer)
   size_t executeTopDown_gOverlaps(RangeQuery Q) override;
   size_t executeBottomUp_gOverlaps(RangeQuery Q) override;
+
+  // ID-collecting query for DuckDB integration
+  void collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result);
 };
 
 // HINT^m with subs+sort optimization activated

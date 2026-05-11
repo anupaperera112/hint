@@ -629,3 +629,310 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
 
     return result;
 }
+
+// ---------------------------------------------------------------------------
+// AoS-based Record-returning methods (used by HINT_M_Dynamic delta index).
+// These use the original AoS partitions, not SoA, since they need full Records.
+// ---------------------------------------------------------------------------
+
+Relation HINT_M::executeTopDown_gOverlaps_Records(RangeQuery Q) {
+    Relation result;
+    RelationIterator iter, iterBegin, iterEnd;
+    Timestamp a = Q.start >> (this->maxBits - this->numBits);
+    Timestamp b = Q.end >> (this->maxBits - this->numBits);
+
+    for (auto l = 0; l < this->numBits; l++) {
+        iterBegin = this->pOrgs[l][a].begin();
+        iterEnd = this->pOrgs[l][a].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+            if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                result.push_back(*iter);
+        }
+
+        iterBegin = this->pReps[l][a].begin();
+        iterEnd = this->pReps[l][a].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+            if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                result.push_back(*iter);
+        }
+
+        if (a < b) {
+            for (auto j = a + 1; j < b; j++) {
+                iterBegin = this->pOrgs[l][j].begin();
+                iterEnd = this->pOrgs[l][j].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(*iter);
+            }
+
+            iterBegin = this->pOrgs[l][b].begin();
+            iterEnd = this->pOrgs[l][b].end();
+            for (iter = iterBegin; iter != iterEnd; iter++) {
+                if (iter->start <= Q.end)
+                    result.push_back(*iter);
+            }
+        }
+
+        a >>= 1;
+        b >>= 1;
+    }
+
+    iterBegin = this->pOrgs[this->numBits][0].begin();
+    iterEnd = this->pOrgs[this->numBits][0].end();
+    for (iter = iterBegin; iter != iterEnd; iter++) {
+        if ((iter->start <= Q.end) && (Q.start <= iter->end))
+            result.push_back(*iter);
+    }
+
+    return result;
+}
+
+Relation HINT_M::executeBottomUp_gOverlaps_Records(RangeQuery Q) {
+    Relation result;
+    RelationIterator iter, iterBegin, iterEnd;
+    Timestamp a = Q.start >> (this->maxBits - this->numBits);
+    Timestamp b = Q.end >> (this->maxBits - this->numBits);
+    bool foundzero = false;
+    bool foundone = false;
+
+    for (auto l = 0; l < this->numBits; l++) {
+        if (foundone && foundzero) {
+            iterBegin = this->pReps[l][a].begin();
+            iterEnd = this->pReps[l][a].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+                result.push_back(*iter);
+
+            for (auto j = a; j <= b; j++) {
+                iterBegin = this->pOrgs[l][j].begin();
+                iterEnd = this->pOrgs[l][j].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(*iter);
+            }
+        } else {
+            if (a == b) {
+                if (!foundzero && !foundone) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                            result.push_back(*iter);
+                    }
+                } else if (foundzero) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (iter->start <= Q.end)
+                            result.push_back(*iter);
+                    }
+                } else if (foundone) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (Q.start <= iter->end)
+                            result.push_back(*iter);
+                    }
+                }
+            } else {
+                if (!foundzero) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (Q.start <= iter->end)
+                            result.push_back(*iter);
+                    }
+                } else {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                        result.push_back(*iter);
+                }
+            }
+
+            if (!foundzero) {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++) {
+                    if (Q.start <= iter->end)
+                        result.push_back(*iter);
+                }
+            } else {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(*iter);
+            }
+
+            if (a < b) {
+                if (!foundone) {
+                    for (auto j = a + 1; j < b; j++) {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(*iter);
+                    }
+
+                    iterBegin = this->pOrgs[l][b].begin();
+                    iterEnd = this->pOrgs[l][b].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (iter->start <= Q.end)
+                            result.push_back(*iter);
+                    }
+                } else {
+                    for (auto j = a + 1; j <= b; j++) {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(*iter);
+                    }
+                }
+            }
+
+            if ((!foundone) && (b % 2))
+                foundone = 1;
+            if ((!foundzero) && (!(a % 2)))
+                foundzero = 1;
+        }
+        a >>= 1;
+        b >>= 1;
+    }
+
+    if (foundone && foundzero) {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+            result.push_back(*iter);
+    } else {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+            if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                result.push_back(*iter);
+        }
+    }
+
+    return result;
+}
+
+// ID-collecting version for DuckDB integration.
+void HINT_M::collectBottomUp_gOverlaps(RangeQuery Q,
+                                       std::vector<RecordId> &result) {
+    RelationIterator iter, iterBegin, iterEnd;
+    Timestamp a = Q.start >> (this->maxBits - this->numBits);
+    Timestamp b = Q.end >> (this->maxBits - this->numBits);
+    bool foundzero = false;
+    bool foundone = false;
+
+    for (auto l = 0; l < this->numBits; l++) {
+        if (foundone && foundzero) {
+            iterBegin = this->pReps[l][a].begin();
+            iterEnd = this->pReps[l][a].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+                result.push_back(iter->id);
+
+            for (auto j = a; j <= b; j++) {
+                iterBegin = this->pOrgs[l][j].begin();
+                iterEnd = this->pOrgs[l][j].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(iter->id);
+            }
+        } else {
+            if (a == b) {
+                if (!foundzero && !foundone) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                            result.push_back(iter->id);
+                    }
+                } else if (foundzero) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (iter->start <= Q.end)
+                            result.push_back(iter->id);
+                    }
+                } else if (foundone) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (Q.start <= iter->end)
+                            result.push_back(iter->id);
+                    }
+                }
+            } else {
+                if (!foundzero) {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (Q.start <= iter->end)
+                            result.push_back(iter->id);
+                    }
+                } else {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                        result.push_back(iter->id);
+                }
+            }
+
+            if (!foundzero) {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++) {
+                    if (Q.start <= iter->end)
+                        result.push_back(iter->id);
+                }
+            } else {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(iter->id);
+            }
+
+            if (a < b) {
+                if (!foundone) {
+                    for (auto j = a + 1; j < b; j++) {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(iter->id);
+                    }
+
+                    iterBegin = this->pOrgs[l][b].begin();
+                    iterEnd = this->pOrgs[l][b].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++) {
+                        if (iter->start <= Q.end)
+                            result.push_back(iter->id);
+                    }
+                } else {
+                    for (auto j = a + 1; j <= b; j++) {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(iter->id);
+                    }
+                }
+            }
+
+            if ((!foundone) && (b % 2))
+                foundone = 1;
+            if ((!foundzero) && (!(a % 2)))
+                foundzero = 1;
+        }
+        a >>= 1;
+        b >>= 1;
+    }
+
+    if (foundone && foundzero) {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+            result.push_back(iter->id);
+    } else {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+            if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                result.push_back(iter->id);
+        }
+    }
+}
