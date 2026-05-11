@@ -193,7 +193,7 @@ Relation::Relation()
 }
 
 
-Relation::Relation(Relation &R) : vector<Record>(R)
+Relation::Relation(const Relation &R) : vector<Record>(R)
 {
 }
 

@@ -188,44 +188,77 @@ void HINT_M_Dynamic::merge()
 //  Querying — union of main index and delta inserts, minus delta deletes
 // ---------------------------------------------------------------------------
 
-size_t HINT_M_Dynamic::executeTopDown_gOverlaps(RangeQuery Q)
+Relation HINT_M_Dynamic::executeTopDown_gOverlaps_Records(RangeQuery Q)
 {
-    size_t result = 0;
+    // Query main index to get records from base relation
+    Relation result = this->mainIndex->executeTopDown_gOverlaps_Records(Q);
 
-    // Always query the main index first, then remove deleted base records by ID.
-    result = this->mainIndex->executeTopDown_gOverlaps(Q);
-
+    // Remove deleted records in a single O(n) pass (no per-element shifting)
     if (!this->deltaDeletes.empty())
     {
-        for (const RecordId id : this->deltaDeletes)
-        {
-            if (id >= this->baseRelation.size())
-                continue;
-            const Record &r = this->baseRelation[id];
-            if ((r.start <= Q.end) && (Q.start <= r.end))
-            {
-#ifdef WORKLOAD_COUNT
-                result--;
-#else
-                result ^= id;
-#endif
-            }
-        }
+        auto &deletes = this->deltaDeletes;
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                [&deletes](const Record &r) {
+                    return deletes.count(r.id) > 0;
+                }),
+            result.end());
     }
 
-    // Scan delta inserts
+    // Add delta inserts that overlap and are not deleted
     for (const Record &r : this->deltaInserts)
     {
-        if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
+        if (this->deltaDeletes.count(r.id) > 0)
             continue;
         if ((r.start <= Q.end) && (Q.start <= r.end))
-        {
+            result.push_back(r);
+    }
+
+    return result;
+}
+
+Relation HINT_M_Dynamic::executeBottomUp_gOverlaps_Records(RangeQuery Q)
+{
+    // Query main index to get records from base relation
+    Relation result = this->mainIndex->executeBottomUp_gOverlaps_Records(Q);
+
+    // Remove deleted records in a single O(n) pass (no per-element shifting)
+    if (!this->deltaDeletes.empty())
+    {
+        auto &deletes = this->deltaDeletes;
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                [&deletes](const Record &r) {
+                    return deletes.count(r.id) > 0;
+                }),
+            result.end());
+    }
+
+    // Add delta inserts that overlap and are not deleted
+    for (const Record &r : this->deltaInserts)
+    {
+        if (this->deltaDeletes.count(r.id) > 0)
+            continue;
+        if ((r.start <= Q.end) && (Q.start <= r.end))
+            result.push_back(r);
+    }
+
+    return result;
+}
+
+// Legacy wrappers: convert record results to size_t
+size_t HINT_M_Dynamic::executeTopDown_gOverlaps(RangeQuery Q)
+{
+    Relation records = executeTopDown_gOverlaps_Records(Q);
+    size_t result = 0;
+
+    for (const Record &r : records)
+    {
 #ifdef WORKLOAD_COUNT
-            result++;
+        result++;
 #else
-            result ^= r.id;
+        result ^= r.id;
 #endif
-        }
     }
 
     return result;
@@ -233,42 +266,16 @@ size_t HINT_M_Dynamic::executeTopDown_gOverlaps(RangeQuery Q)
 
 size_t HINT_M_Dynamic::executeBottomUp_gOverlaps(RangeQuery Q)
 {
+    Relation records = executeBottomUp_gOverlaps_Records(Q);
     size_t result = 0;
 
-    // Always query the main index first, then remove deleted base records by ID.
-    result = this->mainIndex->executeBottomUp_gOverlaps(Q);
-
-    if (!this->deltaDeletes.empty())
+    for (const Record &r : records)
     {
-        for (const RecordId id : this->deltaDeletes)
-        {
-            if (id >= this->baseRelation.size())
-                continue;
-            const Record &r = this->baseRelation[id];
-            if ((r.start <= Q.end) && (Q.start <= r.end))
-            {
 #ifdef WORKLOAD_COUNT
-                result--;
+        result++;
 #else
-                result ^= id;
+        result ^= r.id;
 #endif
-            }
-        }
-    }
-
-    // Scan delta inserts
-    for (const Record &r : this->deltaInserts)
-    {
-        if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-            continue;
-        if ((r.start <= Q.end) && (Q.start <= r.end))
-        {
-#ifdef WORKLOAD_COUNT
-            result++;
-#else
-            result ^= r.id;
-#endif
-        }
     }
 
     return result;
