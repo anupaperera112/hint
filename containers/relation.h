@@ -133,7 +133,7 @@ public:
     float avgRecordExtent;
     
     Relation();
-    Relation(Relation &R);
+    Relation(const Relation &R);
     void load(const char *filename);
     void sortByStart();
     void sortByEnd();

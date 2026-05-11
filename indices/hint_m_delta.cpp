@@ -21,18 +21,16 @@
 
 #include "hint_m_delta.h"
 
-
-
 HINT_M_Dynamic::HINT_M_Dynamic(const Relation &R, const unsigned int numBits,
                                const unsigned int maxBits,
                                const unsigned int insertThreshold,
                                const unsigned int deleteThreshold)
 {
-    this->numBits          = numBits;
-    this->maxBits          = maxBits;
-    this->insertThreshold  = insertThreshold;
-    this->deleteThreshold  = deleteThreshold;
-    this->numMerges        = 0;
+    this->numBits = numBits;
+    this->maxBits = maxBits;
+    this->insertThreshold = insertThreshold;
+    this->deleteThreshold = deleteThreshold;
+    this->numMerges = 0;
 
     // If numBits was 0 (auto), determine via cost model
     if (numBits == 0)
@@ -46,9 +44,9 @@ HINT_M_Dynamic::HINT_M_Dynamic(const Relation &R, const unsigned int numBits,
     }
 
     // Store a copy of the base relation for future rebuilds
-    this->baseRelation.gstart          = R.gstart;
-    this->baseRelation.gend            = R.gend;
-    this->baseRelation.longestRecord   = R.longestRecord;
+    this->baseRelation.gstart = R.gstart;
+    this->baseRelation.gend = R.gend;
+    this->baseRelation.longestRecord = R.longestRecord;
     this->baseRelation.avgRecordExtent = R.avgRecordExtent;
     for (const Record &r : R)
         this->baseRelation.push_back(r);
@@ -65,21 +63,19 @@ HINT_M_Dynamic::HINT_M_Dynamic(const Relation &R, const unsigned int numBits,
     this->mainIndex = new HINT_M(R, this->numBits, this->maxBits);
 
     // Initialise statistics
-    this->numPartitions      = 0;
+    this->numPartitions = 0;
     this->numEmptyPartitions = 0;
-    this->avgPartitionSize   = 0;
-    this->numOriginals       = 0;
-    this->numReplicas        = 0;
-    this->numDeltaInserts    = 0;
-    this->numDeltaDeletes    = 0;
+    this->avgPartitionSize = 0;
+    this->numOriginals = 0;
+    this->numReplicas = 0;
+    this->numDeltaInserts = 0;
+    this->numDeltaDeletes = 0;
 }
-
 
 HINT_M_Dynamic::~HINT_M_Dynamic()
 {
     delete this->mainIndex;
 }
-
 
 // ---------------------------------------------------------------------------
 //  Mutation operations
@@ -90,7 +86,6 @@ void HINT_M_Dynamic::insert(Timestamp start, Timestamp end)
     Record r(this->nextId++, start, end);
     this->insert(r);
 }
-
 
 void HINT_M_Dynamic::insert(const Record &r)
 {
@@ -109,7 +104,6 @@ void HINT_M_Dynamic::insert(const Record &r)
     if (this->needsMerge())
         this->merge();
 }
-
 
 void HINT_M_Dynamic::remove(RecordId id)
 {
@@ -174,7 +168,6 @@ bool HINT_M_Dynamic::needsMerge() const
            (this->deltaDeletes.size() >= this->deleteThreshold);
 }
 
-
 // ---------------------------------------------------------------------------
 //  Merge: rebuild the main index incorporating both deltas
 // ---------------------------------------------------------------------------
@@ -183,9 +176,9 @@ void HINT_M_Dynamic::merge()
 {
     // Step 1: Build a new relation = baseRelation - deletes + inserts
     Relation newRelation;
-    newRelation.gstart          = std::numeric_limits<Timestamp>::max();
-    newRelation.gend            = std::numeric_limits<Timestamp>::min();
-    newRelation.longestRecord   = std::numeric_limits<Timestamp>::min();
+    newRelation.gstart = std::numeric_limits<Timestamp>::max();
+    newRelation.gend = std::numeric_limits<Timestamp>::min();
+    newRelation.longestRecord = std::numeric_limits<Timestamp>::min();
     newRelation.avgRecordExtent = 0;
 
     size_t sum = 0;
@@ -232,8 +225,8 @@ void HINT_M_Dynamic::merge()
 
     // Step 2: Recalculate maxBits based on new domain
     unsigned int newMaxBits = (newRelation.gend > newRelation.gstart)
-                              ? (unsigned int)(log2(newRelation.gend - newRelation.gstart) + 1)
-                              : 1;
+                                  ? (unsigned int)(log2(newRelation.gend - newRelation.gstart) + 1)
+                                  : 1;
 
     // Step 3: Recalculate numBits via cost model if auto, else keep user-specified
     unsigned int newNumBits;
@@ -250,9 +243,9 @@ void HINT_M_Dynamic::merge()
 
     // Step 5: Replace base relation with the merged version
     this->baseRelation.clear();
-    this->baseRelation.gstart          = newRelation.gstart;
-    this->baseRelation.gend            = newRelation.gend;
-    this->baseRelation.longestRecord   = newRelation.longestRecord;
+    this->baseRelation.gstart = newRelation.gstart;
+    this->baseRelation.gend = newRelation.gend;
+    this->baseRelation.longestRecord = newRelation.longestRecord;
     this->baseRelation.avgRecordExtent = newRelation.avgRecordExtent;
     for (const Record &r : newRelation)
         this->baseRelation.push_back(r);
@@ -286,92 +279,94 @@ void HINT_M_Dynamic::forceRebuild()
 //  Querying — union of main index and delta inserts, minus delta deletes
 // ---------------------------------------------------------------------------
 
-size_t HINT_M_Dynamic::executeTopDown_gOverlaps(RangeQuery Q)
+Relation HINT_M_Dynamic::executeTopDown_gOverlaps_Records(RangeQuery Q)
 {
-    size_t result = 0;
+    // Query main index to get records from base relation
+    Relation result = this->mainIndex->executeTopDown_gOverlaps_Records(Q);
 
-    if (this->deltaDeletes.empty())
+    // Remove deleted records in a single O(n) pass (no per-element shifting)
+    if (!this->deltaDeletes.empty())
     {
-        // Fast path: no deletes pending, use HINT^m directly
-        result = this->mainIndex->executeTopDown_gOverlaps(Q);
-    }
-    else
-    {
-        // Slow path: scan base relation, skip deleted IDs
-        for (const Record &r : this->baseRelation)
-        {
-            if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-                continue;
-            if ((r.start <= Q.end) && (Q.start <= r.end))
-            {
-#ifdef WORKLOAD_COUNT
-                result++;
-#else
-                result ^= r.id;
-#endif
-            }
-        }
+        auto &deletes = this->deltaDeletes;
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                [&deletes](const Record &r) {
+                    return deletes.count(r.id) > 0;
+                }),
+            result.end());
     }
 
-    // Scan delta inserts
+    // Add delta inserts that overlap and are not deleted
     for (const Record &r : this->deltaInserts)
     {
-        if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
+        if (this->deltaDeletes.count(r.id) > 0)
             continue;
         if ((r.start <= Q.end) && (Q.start <= r.end))
-        {
-#ifdef WORKLOAD_COUNT
-            result++;
-#else
-            result ^= r.id;
-#endif
-        }
+            result.push_back(r);
     }
 
     return result;
 }
 
+Relation HINT_M_Dynamic::executeBottomUp_gOverlaps_Records(RangeQuery Q)
+{
+    // Query main index to get records from base relation
+    Relation result = this->mainIndex->executeBottomUp_gOverlaps_Records(Q);
+
+    // Remove deleted records in a single O(n) pass (no per-element shifting)
+    if (!this->deltaDeletes.empty())
+    {
+        auto &deletes = this->deltaDeletes;
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                [&deletes](const Record &r) {
+                    return deletes.count(r.id) > 0;
+                }),
+            result.end());
+    }
+
+    // Add delta inserts that overlap and are not deleted
+    for (const Record &r : this->deltaInserts)
+    {
+        if (this->deltaDeletes.count(r.id) > 0)
+            continue;
+        if ((r.start <= Q.end) && (Q.start <= r.end))
+            result.push_back(r);
+    }
+
+    return result;
+}
+
+// Legacy wrappers: convert record results to size_t
+size_t HINT_M_Dynamic::executeTopDown_gOverlaps(RangeQuery Q)
+{
+    Relation records = executeTopDown_gOverlaps_Records(Q);
+    size_t result = 0;
+
+    for (const Record &r : records)
+    {
+#ifdef WORKLOAD_COUNT
+        result++;
+#else
+        result ^= r.id;
+#endif
+    }
+
+    return result;
+}
 
 size_t HINT_M_Dynamic::executeBottomUp_gOverlaps(RangeQuery Q)
 {
+    Relation records = executeBottomUp_gOverlaps_Records(Q);
     size_t result = 0;
 
-    if (this->deltaDeletes.empty())
+    for (const Record &r : records)
     {
-        // Fast path: no deletes pending, use HINT^m directly
-        result = this->mainIndex->executeBottomUp_gOverlaps(Q);
-    }
-    else
-    {
-        // Slow path: scan base relation, skip deleted IDs
-        for (const Record &r : this->baseRelation)
-        {
-            if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-                continue;
-            if ((r.start <= Q.end) && (Q.start <= r.end))
-            {
 #ifdef WORKLOAD_COUNT
-                result++;
+        result++;
 #else
-                result ^= r.id;
+        result ^= r.id;
 #endif
-            }
-        }
-    }
-
-    // Scan delta inserts
-    for (const Record &r : this->deltaInserts)
-    {
-        if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
-            continue;
-        if ((r.start <= Q.end) && (Q.start <= r.end))
-        {
-#ifdef WORKLOAD_COUNT
-            result++;
-#else
-            result ^= r.id;
-#endif
-        }
     }
 
     return result;
@@ -419,22 +414,21 @@ void HINT_M_Dynamic::collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordI
 void HINT_M_Dynamic::getStats()
 {
     this->mainIndex->getStats();
-    this->numPartitions      = this->mainIndex->numPartitions;
+    this->numPartitions = this->mainIndex->numPartitions;
     this->numEmptyPartitions = this->mainIndex->numEmptyPartitions;
-    this->avgPartitionSize   = this->mainIndex->avgPartitionSize;
-    this->numOriginals       = this->mainIndex->numOriginals;
-    this->numReplicas        = this->mainIndex->numReplicas;
-    this->numDeltaInserts    = this->deltaInserts.size();
-    this->numDeltaDeletes    = this->deltaDeletes.size();
+    this->avgPartitionSize = this->mainIndex->avgPartitionSize;
+    this->numOriginals = this->mainIndex->numOriginals;
+    this->numReplicas = this->mainIndex->numReplicas;
+    this->numDeltaInserts = this->deltaInserts.size();
+    this->numDeltaDeletes = this->deltaDeletes.size();
 }
-
 
 void HINT_M_Dynamic::printStats() const
 {
     printf("  Delta inserts (pending)   : %zu\n", this->deltaInserts.size());
     printf("  Delta deletes (pending)   : %zu\n", this->deltaDeletes.size());
-    printf("  Insert threshold          : %u\n",  this->insertThreshold);
-    printf("  Delete threshold          : %u\n",  this->deleteThreshold);
+    printf("  Insert threshold          : %u\n", this->insertThreshold);
+    printf("  Delete threshold          : %u\n", this->deleteThreshold);
     printf("  Total merges performed    : %zu\n", this->numMerges);
     printf("  Base relation size        : %zu\n", this->baseRelation.size());
 }

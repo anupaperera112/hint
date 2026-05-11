@@ -15,8 +15,6 @@
 #include "hint_m.h"
 #include <unordered_set>
 
-
-
 // Dynamic HINT^m wrapper with delta insert/delete indexes
 class HINT_M_Dynamic
 {
@@ -49,7 +47,7 @@ public:
     // Statistics (mirror HierarchicalIndex public stats)
     size_t numPartitions;
     size_t numEmptyPartitions;
-    float  avgPartitionSize;
+    float avgPartitionSize;
     size_t numOriginals, numReplicas;
     size_t numDeltaInserts, numDeltaDeletes;
     size_t numMerges;
@@ -79,6 +77,14 @@ public:
     void forceRebuild();
 
     // Querying — combines main index + delta insert, minus delta delete
+    // Note: Main index methods return size_t, but we need record-level filtering
+    // So we scan baseRelation directly and filter with delta operations for now
+
+    // Return actual records (vector) for efficient delta filtering
+    Relation executeTopDown_gOverlaps_Records(RangeQuery Q);
+    Relation executeBottomUp_gOverlaps_Records(RangeQuery Q);
+
+    // Legacy wrappers that return size_t (for compatibility)
     size_t executeTopDown_gOverlaps(RangeQuery Q);
     size_t executeBottomUp_gOverlaps(RangeQuery Q);
 
