@@ -65,7 +65,7 @@ public:
     // size_t executeBottomUp_gOverlaps(RangeQuery Q);
 
     // // ID-collecting query for DuckDB integration
-    // void collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result);
+    void collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result);
 
 
     // Querying - returns vector of overlapping records (used by delta index)
