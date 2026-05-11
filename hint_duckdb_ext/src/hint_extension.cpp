@@ -2,6 +2,7 @@
 #include <iostream>
 #include <mutex>
 #include <vector>
+#include <unordered_set>
 #define DUCKDB_EXTENSION_MAIN
 
 #include "hint_extension.hpp"
@@ -24,6 +25,7 @@ namespace duckdb
     static std::unique_ptr<::HINT_M> g_MainIndex;
     static std::vector<::Record> g_DeltaLog;
     static ::RecordId g_NextRecordId = 1;
+    static std::unordered_set<::RecordId> g_Tombstones;
 
     // Live Statistics tracking
     static ::Timestamp g_LiveGlobalStart = std::numeric_limits<::Timestamp>::max();
@@ -81,11 +83,29 @@ namespace duckdb
             return;
         }
 
-        // Push everything from delta log to MainRelation (without inline calculations)
+        // Create a new relation and only copy over non-deleted records
+        auto clean_relation = make_uniq<::Relation>();
+
+        // Keep valid records from the existing MainRelation
+        if (g_MainRelation) {
+            for (const auto &rec : *g_MainRelation) {
+                if (g_Tombstones.find(rec.id) == g_Tombstones.end()) {
+                    clean_relation->push_back(rec);
+                }
+            }
+        }
+
+        // Keep valid records from the Delta Log
         for (const auto &rec : g_DeltaLog)
         {
-            g_MainRelation->push_back(rec);
+            if (g_Tombstones.find(rec.id) == g_Tombstones.end()) {
+                clean_relation->push_back(rec);
+            }
         }
+
+        // Replace old relation with the clean one and clear tombstones
+        g_MainRelation = std::move(clean_relation);
+        g_Tombstones.clear();
 
         // Apply Live statistics directly
         g_MainRelation->gstart = g_LiveGlobalStart;
@@ -187,6 +207,11 @@ namespace duckdb
         // 2. Scan the Delta Log (simulating enhancement 1 pipeline)
         for (const auto &rec : g_DeltaLog)
         {
+            // Skip if this record is in the tombstone set
+            if (g_Tombstones.find(rec.id) != g_Tombstones.end()) {
+                continue;
+            }
+
             // Condition for interval overlap: (A.start <= B.end) AND (A.end >= B.start)
             if (rec.start <= Q.end && rec.end >= Q.start)
             {
@@ -198,6 +223,27 @@ namespace duckdb
         output.SetValue(0, 0, Value::BIGINT(overlapping_results));
         lstate.done = true;
     }
+
+    // =========================================================================
+    // 1. hint_delete(start, end) -> BIGINT
+    // O(1) deletion directly from the Delta Log.
+    // =========================================================================
+    
+    static void HintDeleteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+        auto &id_vector = args.data[0];
+        
+        // Lock the global state to prevent race conditions
+        std::lock_guard<std::mutex> lock(g_HintMutex);
+
+        UnaryExecutor::Execute<int64_t, bool>(
+            id_vector, result, args.size(),
+            [&](int64_t id) {
+                // Add the deleted ID to the tombstone set
+                g_Tombstones.insert(static_cast<::RecordId>(id));
+                return true; // Return true to indicate successful deletion
+            });
+    }
+
 
     // =========================================================================
     // REGISTRATION
@@ -216,6 +262,10 @@ namespace duckdb
         TableFunction hint_search_func("hint_search", {LogicalType::BIGINT, LogicalType::BIGINT},
                                        HintSearchOp, HintSearchBind, InitHintState, InitHintLocalState);
         loader.RegisterFunction(hint_search_func);
+
+        // Scalar function for delete
+        ScalarFunction hint_delete("hint_delete", {LogicalType::BIGINT}, LogicalType::BOOLEAN, HintDeleteFunction);
+        loader.RegisterFunction(hint_delete);
     }
 
     void HintExtension::Load(ExtensionLoader &loader)
