@@ -34,6 +34,13 @@ hint_m_delta: $(HINT_M_DELTA_OBJS)
 query_hint_m_simd: $(OBJECTS) indices/hint_m_simd.o
 	$(CC) $(CFLAGS) $(LDFLAGS) utils.o containers/relation.o containers/offsets_templates.o containers/offsets.o indices/hierarchicalindex.o indices/hint_m_simd.o indices/hint_m_subs+sort.o indices/hint_m_subs+sopt.o indices/hint_m_subs+sort+sopt.o indices/hint_m_subs+sort+sopt+ss.o indices/hint_m_subs+sort+sopt+cm.o indices/hint_m_subs+sort+cm.o indices/hint_m_subs+sort+ss+cm.o indices/hint_m_all.o main_hint_m.cpp -o query_hint_m_simd.exec $(LDADD)
 
+duckdb_benchmark: $(HINT_M_DELTA_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.cpp duckdb_hint_benchmark.cpp -lpthread -ldl -o duckdb_hint_benchmark.exec $(LDADD)
+
+duckdb_dynamic_benchmark: $(HINT_M_DELTA_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.cpp duckdb_dynamic_benchmark.cpp -lpthread -ldl -o duckdb_dynamic_benchmark.exec $(LDADD)
+
+
 .cpp.o:
 	$(CC) $(CFLAGS) -c $< -o $@
 
