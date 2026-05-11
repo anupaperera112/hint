@@ -62,6 +62,9 @@ public:
     // Querying
     size_t executeTopDown_gOverlaps(RangeQuery Q);
     size_t executeBottomUp_gOverlaps(RangeQuery Q);
+
+    // ID-collecting query for DuckDB integration
+    void collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result);
 };
 
 

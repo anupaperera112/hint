@@ -3,8 +3,8 @@
  * Purpose:  Indexing interval data - Dynamic HINT^m with delta indexes
  * Author:   Extended from original HINT by Bouros, Christodoulou, Mamoulis
  ******************************************************************************
- * Delta-index extension: adds insert/delete buffering with threshold-based
- * merge to the base HINT^m index.
+ * Delta-index extension: adds insert/delete/update buffering with
+ * threshold-based merge to the base HINT^m index.
  ******************************************************************************/
 
 #ifndef _HINT_M_DELTA_H_
@@ -66,15 +66,24 @@ public:
     void insert(const Record &r);
     void remove(RecordId id);
 
+    // Update = delete old record + insert new record with same ID
+    void update(RecordId id, Timestamp newStart, Timestamp newEnd);
+
     // Check whether merge thresholds have been reached
     bool needsMerge() const;
 
     // Merge both deltas into the main index (rebuild)
     void merge();
 
+    // Force an immediate rebuild regardless of thresholds
+    void forceRebuild();
+
     // Querying — combines main index + delta insert, minus delta delete
     size_t executeTopDown_gOverlaps(RangeQuery Q);
     size_t executeBottomUp_gOverlaps(RangeQuery Q);
+
+    // ID-collecting query for DuckDB integration
+    void collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result);
 
     // Statistics
     void getStats();
@@ -83,6 +92,10 @@ public:
     // Accessors
     unsigned int getNumBits() const { return this->numBits; }
     unsigned int getMaxBits() const { return this->maxBits; }
+    size_t getBaseRelationSize() const { return this->baseRelation.size(); }
+    size_t getDeltaInsertsSize() const { return this->deltaInserts.size(); }
+    size_t getDeltaDeletesSize() const { return this->deltaDeletes.size(); }
+    RecordId getNextId() const { return this->nextId; }
 };
 
 #endif // _HINT_M_DELTA_H_

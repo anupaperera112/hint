@@ -29,6 +29,13 @@ hint_m_delta: $(HINT_M_DELTA_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) main_hint_m_delta.cpp -o query_hint_m_delta.exec $(LDADD)
 
 
+duckdb_benchmark: $(HINT_M_DELTA_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.cpp duckdb_hint_benchmark.cpp -lpthread -ldl -o duckdb_hint_benchmark.exec $(LDADD)
+
+duckdb_dynamic_benchmark: $(HINT_M_DELTA_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.cpp duckdb_dynamic_benchmark.cpp -lpthread -ldl -o duckdb_dynamic_benchmark.exec $(LDADD)
+
+
 .cpp.o:
 	$(CC) $(CFLAGS) -c $< -o $@
 

@@ -607,3 +607,171 @@ size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
     
     return result;
 }
+
+
+// ID-collecting version of executeBottomUp_gOverlaps for DuckDB integration.
+// Instead of counting/XORing, this pushes each matching RecordId into `result`.
+void HINT_M::collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result)
+{
+    RelationIterator iter, iterBegin, iterEnd;
+    Timestamp a = Q.start >> (this->maxBits-this->numBits);
+    Timestamp b = Q.end   >> (this->maxBits-this->numBits);
+    bool foundzero = false;
+    bool foundone = false;
+
+
+    for (auto l = 0; l < this->numBits; l++)
+    {
+        if (foundone && foundzero)
+        {
+            // Partition totally covers query range — all contents are results
+            iterBegin = this->pReps[l][a].begin();
+            iterEnd = this->pReps[l][a].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+                result.push_back(iter->id);
+
+            for (auto j = a; j <= b; j++)
+            {
+                iterBegin = this->pOrgs[l][j].begin();
+                iterEnd = this->pOrgs[l][j].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(iter->id);
+            }
+        }
+        else
+        {
+            // Comparisons needed
+            if (a == b)
+            {
+                if (!foundzero && !foundone)
+                {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                    {
+                        if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                            result.push_back(iter->id);
+                    }
+                }
+                else if (foundzero)
+                {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                    {
+                        if (iter->start <= Q.end)
+                            result.push_back(iter->id);
+                    }
+                }
+                else if (foundone)
+                {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                    {
+                        if (Q.start <= iter->end)
+                            result.push_back(iter->id);
+                    }
+                }
+            }
+            else
+            {
+                // Lemma 1
+                if (!foundzero)
+                {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                    {
+                        if (Q.start <= iter->end)
+                            result.push_back(iter->id);
+                    }
+                }
+                else
+                {
+                    iterBegin = this->pOrgs[l][a].begin();
+                    iterEnd = this->pOrgs[l][a].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                        result.push_back(iter->id);
+                }
+            }
+
+            // Lemma 1, 3
+            if (!foundzero)
+            {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                {
+                    if (Q.start <= iter->end)
+                        result.push_back(iter->id);
+                }
+            }
+            else
+            {
+                iterBegin = this->pReps[l][a].begin();
+                iterEnd = this->pReps[l][a].end();
+                for (iter = iterBegin; iter != iterEnd; iter++)
+                    result.push_back(iter->id);
+            }
+
+            if (a < b)
+            {
+                if (!foundone)
+                {
+                    for (auto j = a+1; j < b; j++)
+                    {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(iter->id);
+                    }
+
+                    iterBegin = this->pOrgs[l][b].begin();
+                    iterEnd = this->pOrgs[l][b].end();
+                    for (iter = iterBegin; iter != iterEnd; iter++)
+                    {
+                        if (iter->start <= Q.end)
+                            result.push_back(iter->id);
+                    }
+                }
+                else
+                {
+                    for (auto j = a+1; j <= b; j++)
+                    {
+                        iterBegin = this->pOrgs[l][j].begin();
+                        iterEnd = this->pOrgs[l][j].end();
+                        for (iter = iterBegin; iter != iterEnd; iter++)
+                            result.push_back(iter->id);
+                    }
+                }
+            }
+
+            if ((!foundone) && (b%2))
+                foundone = 1;
+            if ((!foundzero) && (!(a%2)))
+                foundzero = 1;
+        }
+        a >>= 1;
+        b >>= 1;
+    }
+
+    // Handle root
+    if (foundone && foundzero)
+    {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+            result.push_back(iter->id);
+    }
+    else
+    {
+        iterBegin = this->pOrgs[this->numBits][0].begin();
+        iterEnd = this->pOrgs[this->numBits][0].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+        {
+            if ((iter->start <= Q.end) && (Q.start <= iter->end))
+                result.push_back(iter->id);
+        }
+    }
+}

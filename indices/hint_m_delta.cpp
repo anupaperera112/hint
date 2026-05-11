@@ -3,8 +3,20 @@
  * Purpose:  Indexing interval data - Dynamic HINT^m with delta indexes
  * Author:   Extended from original HINT by Bouros, Christodoulou, Mamoulis
  ******************************************************************************
- * Delta-index extension: adds insert/delete buffering with threshold-based
- * merge to the base HINT^m index.
+ * Delta-index extension: adds insert/delete/update buffering with
+ * threshold-based merge to the base HINT^m index.
+ *
+ * Architecture:
+ *   mainIndex     – a static HINT^m built over `baseRelation`
+ *   deltaInserts  – buffered records not yet in mainIndex
+ *   deltaDeletes  – set of record IDs logically removed
+ *
+ * On query:
+ *   result = query(mainIndex, skip deltaDeletes)
+ *          + scan(deltaInserts, skip deltaDeletes)
+ *
+ * When either delta exceeds its threshold, merge() rebuilds everything
+ * into a fresh mainIndex.
  ******************************************************************************/
 
 #include "hint_m_delta.h"
@@ -42,7 +54,12 @@ HINT_M_Dynamic::HINT_M_Dynamic(const Relation &R, const unsigned int numBits,
         this->baseRelation.push_back(r);
 
     // Track the next available record ID
-    this->nextId = (RecordId)R.size();
+    this->nextId = 0;
+    for (const Record &r : R)
+    {
+        if (r.id >= this->nextId)
+            this->nextId = r.id + 1;
+    }
 
     // Build the initial main HINT^m index
     this->mainIndex = new HINT_M(R, this->numBits, this->maxBits);
@@ -84,6 +101,10 @@ void HINT_M_Dynamic::insert(const Record &r)
 
     this->deltaInserts.push_back(r);
 
+    // Update nextId to stay ahead of any user-supplied IDs
+    if (r.id >= this->nextId)
+        this->nextId = r.id + 1;
+
     // Auto-merge if insert threshold is reached
     if (this->needsMerge())
         this->merge();
@@ -92,9 +113,56 @@ void HINT_M_Dynamic::insert(const Record &r)
 
 void HINT_M_Dynamic::remove(RecordId id)
 {
+    // Also remove from deltaInserts if present (insert then delete)
+    bool foundInDelta = false;
+    for (size_t i = 0; i < this->deltaInserts.size(); i++)
+    {
+        if (this->deltaInserts[i].id == id)
+        {
+            // Swap with last and pop (O(1) removal from unordered buffer)
+            this->deltaInserts[i] = this->deltaInserts.back();
+            this->deltaInserts.pop_back();
+            foundInDelta = true;
+            break;
+        }
+    }
+
+    // Mark as deleted in the main index (even if also removed from delta,
+    // the ID might exist in baseRelation from before)
     this->deltaDeletes.insert(id);
 
     // Auto-merge if delete threshold is reached
+    if (this->needsMerge())
+        this->merge();
+}
+
+
+void HINT_M_Dynamic::update(RecordId id, Timestamp newStart, Timestamp newEnd)
+{
+    // Step 1: Soft-delete the old record
+    // Remove from deltaInserts if present
+    for (size_t i = 0; i < this->deltaInserts.size(); i++)
+    {
+        if (this->deltaInserts[i].id == id)
+        {
+            this->deltaInserts[i] = this->deltaInserts.back();
+            this->deltaInserts.pop_back();
+            break;
+        }
+    }
+    // Mark as deleted in the main index
+    this->deltaDeletes.insert(id);
+
+    // Step 2: Insert the replacement record with the SAME id
+    Record updatedRec(id, newStart, newEnd);
+
+    // Undo the delete we just did (insert re-uses the same ID)
+    this->deltaDeletes.erase(id);
+
+    // Add to the delta insert buffer
+    this->deltaInserts.push_back(updatedRec);
+
+    // Auto-merge if thresholds are met
     if (this->needsMerge())
         this->merge();
 }
@@ -130,7 +198,8 @@ void HINT_M_Dynamic::merge()
             newRelation.push_back(r);
             newRelation.gstart = std::min(newRelation.gstart, r.start);
             newRelation.gend   = std::max(newRelation.gend, r.end);
-            newRelation.longestRecord = std::max(newRelation.longestRecord, r.end - r.start + 1);
+            newRelation.longestRecord = std::max(newRelation.longestRecord,
+                                                 (Timestamp)(r.end - r.start + 1));
             sum += r.end - r.start;
         }
     }
@@ -143,13 +212,23 @@ void HINT_M_Dynamic::merge()
             newRelation.push_back(r);
             newRelation.gstart = std::min(newRelation.gstart, r.start);
             newRelation.gend   = std::max(newRelation.gend, r.end);
-            newRelation.longestRecord = std::max(newRelation.longestRecord, r.end - r.start + 1);
+            newRelation.longestRecord = std::max(newRelation.longestRecord,
+                                                 (Timestamp)(r.end - r.start + 1));
             sum += r.end - r.start;
         }
     }
 
     if (!newRelation.empty())
         newRelation.avgRecordExtent = (float)sum / newRelation.size();
+
+    // Handle empty relation edge case
+    if (newRelation.empty())
+    {
+        newRelation.gstart          = 0;
+        newRelation.gend            = 0;
+        newRelation.longestRecord   = 0;
+        newRelation.avgRecordExtent = 0;
+    }
 
     // Step 2: Recalculate maxBits based on new domain
     unsigned int newMaxBits = (newRelation.gend > newRelation.gstart)
@@ -190,6 +269,16 @@ void HINT_M_Dynamic::merge()
     }
 
     this->numMerges++;
+}
+
+
+// ---------------------------------------------------------------------------
+//  Force rebuild (ignores thresholds)
+// ---------------------------------------------------------------------------
+
+void HINT_M_Dynamic::forceRebuild()
+{
+    this->merge();
 }
 
 
@@ -290,6 +379,40 @@ size_t HINT_M_Dynamic::executeBottomUp_gOverlaps(RangeQuery Q)
 
 
 // ---------------------------------------------------------------------------
+//  ID-collecting query for DuckDB integration
+// ---------------------------------------------------------------------------
+
+void HINT_M_Dynamic::collectBottomUp_gOverlaps(RangeQuery Q, std::vector<RecordId> &result)
+{
+    if (this->deltaDeletes.empty())
+    {
+        // Fast path: no deletes pending, use HINT^m collect directly
+        this->mainIndex->collectBottomUp_gOverlaps(Q, result);
+    }
+    else
+    {
+        // Slow path: scan base relation, skip deleted IDs
+        for (const Record &r : this->baseRelation)
+        {
+            if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
+                continue;
+            if ((r.start <= Q.end) && (Q.start <= r.end))
+                result.push_back(r.id);
+        }
+    }
+
+    // Scan delta inserts
+    for (const Record &r : this->deltaInserts)
+    {
+        if (this->deltaDeletes.find(r.id) != this->deltaDeletes.end())
+            continue;
+        if ((r.start <= Q.end) && (Q.start <= r.end))
+            result.push_back(r.id);
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 //  Statistics
 // ---------------------------------------------------------------------------
 
@@ -315,3 +438,4 @@ void HINT_M_Dynamic::printStats() const
     printf("  Total merges performed    : %zu\n", this->numMerges);
     printf("  Base relation size        : %zu\n", this->baseRelation.size());
 }
+
