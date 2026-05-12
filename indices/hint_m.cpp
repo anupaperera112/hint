@@ -30,580 +30,539 @@
 
 #include "hint_m.h"
 
+inline void HINT_M::updateCounters(const Record &r) {
+  int level = 0;
+  Timestamp a = r.start >> (this->maxBits - this->numBits);
+  Timestamp b = r.end >> (this->maxBits - this->numBits);
+  Timestamp prevb;
+  int firstfound = 0;
 
-
-inline void HINT_M::updateCounters(const Record &r)
-{
-    int level = 0;
-    Timestamp a = r.start >> (this->maxBits-this->numBits);
-    Timestamp b = r.end   >> (this->maxBits-this->numBits);
-    Timestamp prevb;
-    int firstfound = 0;
-    
-    
-    while (level < this->height && a <= b)
-    {
-        if (a%2)
-        { //last bit of a is 1
-            if (firstfound)
-            {
-                //printf("added to level %d, bucket %d, class B\n",level,a);
-                this->pReps_sizes[level][a]++;
-            }
-            else
-            {
-                //printf("added to level %d, bucket %d, class A\n",level,a);
-                this->pOrgs_sizes[level][a]++;
-                firstfound = 1;
-            }
-            //a+=(int)(pow(2,level));
-            a++;
-        }
-        if (!(b%2))
-        { //last bit of b is 0
-            prevb = b;
-            //b-=(int)(pow(2,level));
-            b--;
-            if ((!firstfound) && b<a)
-            {
-                //printf("added to level %d, bucket %d, class A\n",level,prevb);
-                this->pOrgs_sizes[level][prevb]++;
-            }
-            else
-            {
-                //printf("added to level %d, bucket %d, class B\n",level,prevb);
-                this->pReps_sizes[level][prevb]++;
-            }
-        }
-        a >>= 1; // a = a div 2
-        b >>= 1; // b = b div 2
-        level++;
+  while (level < this->height && a <= b) {
+    if (a % 2) { // last bit of a is 1
+      if (firstfound) {
+        // printf("added to level %d, bucket %d, class B\n",level,a);
+        this->pReps_sizes[level][a]++;
+      } else {
+        // printf("added to level %d, bucket %d, class A\n",level,a);
+        this->pOrgs_sizes[level][a]++;
+        firstfound = 1;
+      }
+      // a+=(int)(pow(2,level));
+      a++;
     }
+    if (!(b % 2)) { // last bit of b is 0
+      prevb = b;
+      // b-=(int)(pow(2,level));
+      b--;
+      if ((!firstfound) && b < a) {
+        // printf("added to level %d, bucket %d, class A\n",level,prevb);
+        this->pOrgs_sizes[level][prevb]++;
+      } else {
+        // printf("added to level %d, bucket %d, class B\n",level,prevb);
+        this->pReps_sizes[level][prevb]++;
+      }
+    }
+    a >>= 1; // a = a div 2
+    b >>= 1; // b = b div 2
+    level++;
+  }
 }
 
+inline void HINT_M::updatePartitions(const Record &r) {
+  int level = 0;
+  Timestamp a = r.start >> (this->maxBits - this->numBits);
+  Timestamp b = r.end >> (this->maxBits - this->numBits);
+  Timestamp prevb;
+  int firstfound = 0;
 
-inline void HINT_M::updatePartitions(const Record &r)
-{
-    int level = 0;
-    Timestamp a = r.start >> (this->maxBits-this->numBits);
-    Timestamp b = r.end   >> (this->maxBits-this->numBits);
-    Timestamp prevb;
-    int firstfound = 0;
-    
-    
-    while (level < this->height && a <= b)
-    {
-        if (a%2)
-        { //last bit of a is 1
-            if (firstfound)
-            {
-                this->pReps[level][a][this->pReps_sizes[level][a]] = r;
-                this->pReps_sizes[level][a]++;
-            }
-            else
-            {
-                this->pOrgs[level][a][this->pOrgs_sizes[level][a]] = r;
-                this->pOrgs_sizes[level][a]++;
-                firstfound = 1;
-            }
-            //a+=(int)(pow(2,level));
-            a++;
-        }
-        if (!(b%2))
-        { //last bit of b is 0
-            prevb = b;
-            b--;
-            //b-=(int)(pow(2,level));
-            if ((!firstfound) && b < a)
-            {
-                this->pOrgs[level][prevb][this->pOrgs_sizes[level][prevb]] = r;
-                this->pOrgs_sizes[level][prevb]++;
-            }
-            else
-            {
-                this->pReps[level][prevb][this->pReps_sizes[level][prevb]] = r;
-                this->pReps_sizes[level][prevb]++;
-            }
-        }
-        a >>= 1; // a = a div 2
-        b >>= 1; // b = b div 2
-        level++;
+  while (level < this->height && a <= b) {
+    if (a % 2) { // last bit of a is 1
+      if (firstfound) {
+        this->pReps[level][a][this->pReps_sizes[level][a]] = r;
+        this->pReps_sizes[level][a]++;
+      } else {
+        this->pOrgs[level][a][this->pOrgs_sizes[level][a]] = r;
+        this->pOrgs_sizes[level][a]++;
+        firstfound = 1;
+      }
+      // a+=(int)(pow(2,level));
+      a++;
     }
+    if (!(b % 2)) { // last bit of b is 0
+      prevb = b;
+      b--;
+      // b-=(int)(pow(2,level));
+      if ((!firstfound) && b < a) {
+        this->pOrgs[level][prevb][this->pOrgs_sizes[level][prevb]] = r;
+        this->pOrgs_sizes[level][prevb]++;
+      } else {
+        this->pReps[level][prevb][this->pReps_sizes[level][prevb]] = r;
+        this->pReps_sizes[level][prevb]++;
+      }
+    }
+    a >>= 1; // a = a div 2
+    b >>= 1; // b = b div 2
+    level++;
+  }
 }
 
+HINT_M::HINT_M(const Relation &R, const unsigned int numBits,
+               const unsigned int maxBits)
+    : HierarchicalIndex(R, numBits, maxBits) {
+  // Step 1: one pass to count the contents inside each partition.
+  this->pOrgs_sizes = (RecordId **)malloc(this->height * sizeof(RecordId *));
+  this->pReps_sizes = (size_t **)malloc(this->height * sizeof(size_t *));
 
-HINT_M::HINT_M(const Relation &R, const unsigned int numBits, const unsigned int maxBits) : HierarchicalIndex(R, numBits, maxBits)
-{
-    // Step 1: one pass to count the contents inside each partition.
-    this->pOrgs_sizes = (RecordId **)malloc(this->height*sizeof(RecordId *));
-    this->pReps_sizes = (size_t **)malloc(this->height*sizeof(size_t *));
+  for (auto l = 0; l < this->height; l++) {
+    auto cnt = (int)(pow(2, this->numBits - l));
 
-    for (auto l = 0; l < this->height; l++)
-    {
-        auto cnt = (int)(pow(2, this->numBits-l));
-        
-        //calloc allocates memory and sets each counter to 0
-        this->pOrgs_sizes[l] = (RecordId *)calloc(cnt, sizeof(RecordId));
-        this->pReps_sizes[l] = (size_t *)calloc(cnt, sizeof(size_t));
+    // calloc allocates memory and sets each counter to 0
+    this->pOrgs_sizes[l] = (RecordId *)calloc(cnt, sizeof(RecordId));
+    this->pReps_sizes[l] = (size_t *)calloc(cnt, sizeof(size_t));
+  }
+
+  for (const Record &r : R)
+    this->updateCounters(r);
+
+  // Step 2: allocate necessary memory.
+  this->pOrgs = new Relation *[this->height];
+  this->pReps = new Relation *[this->height];
+  for (auto l = 0; l < this->height; l++) {
+    auto cnt = (int)(pow(2, this->numBits - l));
+
+    this->pOrgs[l] = new Relation[cnt];
+    this->pReps[l] = new Relation[cnt];
+
+    for (auto j = 0; j < cnt; j++) {
+      this->pOrgs[l][j].resize(this->pOrgs_sizes[l][j]);
+      this->pReps[l][j].resize(this->pReps_sizes[l][j]);
     }
-    
-    for (const Record &r : R)
-        this->updateCounters(r);
+  }
+  for (auto l = 0; l < this->height; l++) {
+    auto cnt = (int)(pow(2, this->numBits - l));
 
-    
-    // Step 2: allocate necessary memory.
-    this->pOrgs = new Relation*[this->height];
-    this->pReps = new Relation*[this->height];
-    for (auto l = 0; l < this->height; l++)
-    {
-        auto cnt = (int)(pow(2, this->numBits-l));
+    memset(this->pOrgs_sizes[l], 0, cnt * sizeof(RecordId));
+    memset(this->pReps_sizes[l], 0, cnt * sizeof(size_t));
+  }
 
-        this->pOrgs[l] = new Relation[cnt];
-        this->pReps[l] = new Relation[cnt];
+  // Step 3: fill partitions.
+  for (const Record &r : R)
+    this->updatePartitions(r);
 
-        for (auto j = 0; j < cnt; j++)
-        {
-            this->pOrgs[l][j].resize(this->pOrgs_sizes[l][j]);
-            this->pReps[l][j].resize(this->pReps_sizes[l][j]);
-        }
-    }
-    for (auto l = 0; l < this->height; l++)
-    {
-        auto cnt = (int)(pow(2, this->numBits-l));
-        
-        memset(this->pOrgs_sizes[l], 0, cnt*sizeof(RecordId));
-        memset(this->pReps_sizes[l], 0, cnt*sizeof(size_t));
-    }
-
-
-    // Step 3: fill partitions.
-    for (const Record &r : R)
-        this->updatePartitions(r);
-
-
-    // Free auxiliary memory.
-    for (auto l = 0; l < this->height; l++)
-    {
-        free(pOrgs_sizes[l]);
-        free(pReps_sizes[l]);
-    }
-    free(pOrgs_sizes);
-    free(pReps_sizes);
+  // Free auxiliary memory.
+  for (auto l = 0; l < this->height; l++) {
+    free(pOrgs_sizes[l]);
+    free(pReps_sizes[l]);
+  }
+  free(pOrgs_sizes);
+  free(pReps_sizes);
 }
 
+void HINT_M::print(char c) {
+  for (auto l = 0; l < this->height; l++) {
+    auto cnt = pow(2, this->numBits - l);
 
-void HINT_M::print(char c)
-{
-    for (auto l = 0; l < this->height; l++)
-    {
-        auto cnt = pow(2, this->numBits-l);
-        
-        printf("Level %d: %d partitions\n", l, cnt);
-        for (auto j = 0; j < cnt; j++)
-        {
-            printf("Orgs %d (%d): ", j, this->pOrgs[l][j].size());
-//            for (auto k = 0; k < this->bucketcountersA[i][j]; k++)
-//                printf("%d ", this->pOrgs[i][j][k].id);
-            printf("\n");
-            printf("Reps %d (%d): ", j, this->pReps[l][j].size());
-//            for (auto k = 0; k < this->bucketcountersB[i][j]; k++)
-//                printf("%d ", this->pReps[i][j][k].id);
-            printf("\n\n");
-        }
+    printf("Level %d: %d partitions\n", l, cnt);
+    for (auto j = 0; j < cnt; j++) {
+      printf("Orgs %d (%d): ", j, this->pOrgs[l][j].size());
+      //            for (auto k = 0; k < this->bucketcountersA[i][j]; k++)
+      //                printf("%d ", this->pOrgs[i][j][k].id);
+      printf("\n");
+      printf("Reps %d (%d): ", j, this->pReps[l][j].size());
+      //            for (auto k = 0; k < this->bucketcountersB[i][j]; k++)
+      //                printf("%d ", this->pReps[i][j][k].id);
+      printf("\n\n");
     }
+  }
 }
 
+void HINT_M::getStats() {
+  for (auto l = 0; l < this->height; l++) {
+    auto cnt = pow(2, this->numBits - l);
 
-void HINT_M::getStats()
-{
-    for (auto l = 0; l < this->height; l++)
-    {
-        auto cnt = pow(2, this->numBits-l);
-
-        this->numPartitions += cnt;
-        for (int p = 0; p < cnt; p++)
-        {
-            this->numOriginals += this->pOrgs[l][p].size();
-            this->numReplicas += this->pReps[l][p].size();
-            if ((this->pOrgs[l][p].empty()) && (this->pReps[l][p].empty()))
-                this->numEmptyPartitions++;
-        }
+    this->numPartitions += cnt;
+    for (int p = 0; p < cnt; p++) {
+      this->numOriginals += this->pOrgs[l][p].size();
+      this->numReplicas += this->pReps[l][p].size();
+      if ((this->pOrgs[l][p].empty()) && (this->pReps[l][p].empty()))
+        this->numEmptyPartitions++;
     }
+  }
 
-    this->avgPartitionSize = (float)(this->numIndexedRecords+this->numReplicas)/(this->numPartitions-numEmptyPartitions);
+  this->avgPartitionSize =
+      (float)(this->numIndexedRecords + this->numReplicas) /
+      (this->numPartitions - numEmptyPartitions);
 }
 
-
-HINT_M::~HINT_M()
-{
-    for (auto l = 0; l < this->height; l++)
-    {
-        delete[] this->pOrgs[l];
-        delete[] this->pReps[l];
-    }
-    delete[] this->pOrgs;
-    delete[] this->pReps;
+HINT_M::~HINT_M() {
+  for (auto l = 0; l < this->height; l++) {
+    delete[] this->pOrgs[l];
+    delete[] this->pReps[l];
+  }
+  delete[] this->pOrgs;
+  delete[] this->pReps;
 }
-
 
 // Generalized predicates, ACM SIGMOD'22 gOverlaps
-size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q)
-{
-    size_t result = 0;
-    RelationIterator iter, iterBegin, iterEnd;
-    Timestamp a = Q.start >> (this->maxBits-this->numBits); // prefix
-    Timestamp b = Q.end   >> (this->maxBits-this->numBits); // prefix
-    
-    
-    for (auto l = 0; l < this->numBits; l++)
-    {
-        // Handle the partition that contains a: consider both originals and replicas, comparisons needed
-        iterBegin = this->pOrgs[l][a].begin();
-        iterEnd = this->pOrgs[l][a].end();
+Relation HINT_M::executeTopDown_gOverlaps_Records(RangeQuery Q) {
+  Relation result;
+  RelationIterator iter, iterBegin, iterEnd;
+  Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
+  Timestamp b = Q.end >> (this->maxBits - this->numBits);   // prefix
+
+  for (auto l = 0; l < this->numBits; l++) {
+    // Handle the partition that contains a: consider both originals and
+    // replicas, comparisons needed
+    iterBegin = this->pOrgs[l][a].begin();
+    iterEnd = this->pOrgs[l][a].end();
+    for (iter = iterBegin; iter != iterEnd; iter++) {
+      if ((iter->start <= Q.end) && (Q.start <= iter->end))
+        result.push_back(*iter);
+    }
+
+    iterBegin = this->pReps[l][a].begin();
+    iterEnd = this->pReps[l][a].end();
+    for (iter = iterBegin; iter != iterEnd; iter++) {
+      if ((iter->start <= Q.end) && (Q.start <= iter->end))
+        result.push_back(*iter);
+    }
+
+    if (a < b) {
+      // Handle the rest before the partition that contains b: consider only
+      // originals, no comparisons needed
+      for (auto j = a + 1; j < b; j++) {
+        iterBegin = this->pOrgs[l][j].begin();
+        iterEnd = this->pOrgs[l][j].end();
         for (iter = iterBegin; iter != iterEnd; iter++)
-        {
+          result.push_back(*iter);
+      }
+
+      // Handle the partition that contains b: consider only originals,
+      // comparisons needed
+      iterBegin = this->pOrgs[l][b].begin();
+      iterEnd = this->pOrgs[l][b].end();
+      for (iter = iterBegin; iter != iterEnd; iter++) {
+        if (iter->start <= Q.end)
+          result.push_back(*iter);
+      }
+    }
+
+    a >>= 1; // a = a div 2
+    b >>= 1; // b = b div 2
+  }
+
+  // Handle root: consider only originals, comparisons needed
+  iterBegin = this->pOrgs[this->numBits][0].begin();
+  iterEnd = this->pOrgs[this->numBits][0].end();
+  for (iter = iterBegin; iter != iterEnd; iter++) {
+    if ((iter->start <= Q.end) && (Q.start <= iter->end))
+      result.push_back(*iter);
+  }
+
+  return result;
+}
+
+Relation HINT_M::executeBottomUp_gOverlaps_Records(RangeQuery Q) {
+  Relation result;
+  RelationIterator iter, iterBegin, iterEnd;
+  Timestamp a = Q.start >> (this->maxBits - this->numBits); // prefix
+  Timestamp b = Q.end >> (this->maxBits - this->numBits);   // prefix
+  bool foundzero = false;
+  bool foundone = false;
+
+  for (auto l = 0; l < this->numBits; l++) {
+    if (foundone && foundzero) {
+      // Partition totally covers lowest-level partition range that includes
+      // query range all contents are guaranteed to be results
+
+      // Handle the partition that contains a: consider both originals and
+      // replicas
+      iterBegin = this->pReps[l][a].begin();
+      iterEnd = this->pReps[l][a].end();
+      for (iter = iterBegin; iter != iterEnd; iter++)
+        result.push_back(*iter);
+
+      // Handle rest: consider only originals
+      for (auto j = a; j <= b; j++) {
+        iterBegin = this->pOrgs[l][j].begin();
+        iterEnd = this->pOrgs[l][j].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+          result.push_back(*iter);
+      }
+    } else {
+      // Comparisons needed
+
+      // Handle the partition that contains a: consider both originals and
+      // replicas, comparisons needed
+      if (a == b) {
+        // Special case when query overlaps only one partition, Lemma 3
+        if (!foundzero && !foundone) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
             if ((iter->start <= Q.end) && (Q.start <= iter->end))
-            {
-#ifdef WORKLOAD_COUNT
-                result++;
-#else
-                result ^= iter->id;
-#endif
-            }
+              result.push_back(*iter);
+          }
+        } else if (foundzero) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->start <= Q.end)
+              result.push_back(*iter);
+          }
+        } else if (foundone) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (Q.start <= iter->end)
+              result.push_back(*iter);
+          }
         }
-        
+      } else {
+        // Lemma 1
+        if (!foundzero) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (Q.start <= iter->end)
+              result.push_back(*iter);
+          }
+        } else {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++)
+            result.push_back(*iter);
+        }
+      }
+
+      // Lemma 1, 3
+      if (!foundzero) {
+        // TODO with
+        iterBegin = this->pReps[l][a].begin();
+        iterEnd = this->pReps[l][a].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+          if (Q.start <= iter->end)
+            result.push_back(*iter);
+        }
+      } else {
         iterBegin = this->pReps[l][a].begin();
         iterEnd = this->pReps[l][a].end();
         for (iter = iterBegin; iter != iterEnd; iter++)
-        {
-            if ((iter->start <= Q.end) && (Q.start <= iter->end))
-            {
-#ifdef WORKLOAD_COUNT
-                result++;
-#else
-                result ^= iter->id;
-#endif
-            }
-        }
-        
-        if (a < b)
-        {
-            // Handle the rest before the partition that contains b: consider only originals, no comparisons needed
-            for (auto j = a+1; j < b; j++)
-            {
-                iterBegin = this->pOrgs[l][j].begin();
-                iterEnd = this->pOrgs[l][j].end();
-                for (iter = iterBegin; iter != iterEnd; iter++)
-                {
-#ifdef WORKLOAD_COUNT
-                    result++;
-#else
-                    result ^= iter->id;
-#endif
-                }
-            }
-            
-            // Handle the partition that contains b: consider only originals, comparisons needed
-            iterBegin = this->pOrgs[l][b].begin();
-            iterEnd = this->pOrgs[l][b].end();
+          result.push_back(*iter);
+      }
+
+      if (a < b) {
+        if (!foundone) {
+          // Handle the rest before the partition that contains b: consider only
+          // originals, no comparisons needed
+          for (auto j = a + 1; j < b; j++) {
+            iterBegin = this->pOrgs[l][j].begin();
+            iterEnd = this->pOrgs[l][j].end();
             for (iter = iterBegin; iter != iterEnd; iter++)
-            {
-                if (iter->start <= Q.end)
-                {
-#ifdef WORKLOAD_COUNT
-                    result++;
-#else
-                    result ^= iter->id;
-#endif
-                }
-            }
+              result.push_back(*iter);
+          }
+
+          // Handle the partition that contains b: consider only originals,
+          // comparisons needed
+          iterBegin = this->pOrgs[l][b].begin();
+          iterEnd = this->pOrgs[l][b].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->start <= Q.end)
+              result.push_back(*iter);
+          }
+        } else {
+          for (auto j = a + 1; j <= b; j++) {
+            iterBegin = this->pOrgs[l][j].begin();
+            iterEnd = this->pOrgs[l][j].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+              result.push_back(*iter);
+          }
         }
-        
-        a >>= 1; // a = a div 2
-        b >>= 1; // b = b div 2
+      }
+
+      if ((!foundone) && (b % 2)) // last bit of b is 1
+        foundone = 1;
+      if ((!foundzero) && (!(a % 2))) // last bit of a is 0
+        foundzero = 1;
     }
-    
-    // Handle root: consider only originals, comparisons needed
+    a >>= 1; // a = a div 2
+    b >>= 1; // b = b div 2
+  }
+
+  // Handle root.
+  if (foundone && foundzero) {
+    // All contents are guaranteed to be results
     iterBegin = this->pOrgs[this->numBits][0].begin();
     iterEnd = this->pOrgs[this->numBits][0].end();
     for (iter = iterBegin; iter != iterEnd; iter++)
-    {
-        if ((iter->start <= Q.end) && (Q.start <= iter->end))
-        {
-#ifdef WORKLOAD_COUNT
-            result++;
-#else
-            result ^= iter->id;
-#endif
-        }
+      result.push_back(*iter);
+  } else {
+    // Comparisons needed
+    iterBegin = this->pOrgs[this->numBits][0].begin();
+    iterEnd = this->pOrgs[this->numBits][0].end();
+    for (iter = iterBegin; iter != iterEnd; iter++) {
+      if ((iter->start <= Q.end) && (Q.start <= iter->end))
+        result.push_back(*iter);
     }
-    
-    
-    return result;
+  }
+
+  return result;
 }
 
+// Virtual overrides returning size_t (for HierarchicalIndex interface)
+size_t HINT_M::executeTopDown_gOverlaps(RangeQuery Q) {
+  Relation records = this->executeTopDown_gOverlaps_Records(Q);
+  size_t result = 0;
+  for (const Record &r : records) {
+#ifdef WORKLOAD_COUNT
+    result++;
+#else
+    result ^= r.id;
+#endif
+  }
+  return result;
+}
 
-size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q)
-{
-    size_t result = 0;
-    RelationIterator iter, iterBegin, iterEnd;
-    Timestamp a = Q.start >> (this->maxBits-this->numBits); // prefix
-    Timestamp b = Q.end   >> (this->maxBits-this->numBits); // prefix
-    bool foundzero = false;
-    bool foundone = false;
-    
-    
-    for (auto l = 0; l < this->numBits; l++)
-    {
-        if (foundone && foundzero)
-        {
-            // Partition totally covers lowest-level partition range that includes query range
-            // all contents are guaranteed to be results
-            
-            // Handle the partition that contains a: consider both originals and replicas
-            iterBegin = this->pReps[l][a].begin();
-            iterEnd = this->pReps[l][a].end();
-            for (iter = iterBegin; iter != iterEnd; iter++)
-            {
+size_t HINT_M::executeBottomUp_gOverlaps(RangeQuery Q) {
+  Relation records = this->executeBottomUp_gOverlaps_Records(Q);
+  size_t result = 0;
+  for (const Record &r : records) {
 #ifdef WORKLOAD_COUNT
-                result++;
+    result++;
 #else
-                result ^= iter->id;
+    result ^= r.id;
 #endif
-            }
-            
-            // Handle rest: consider only originals
-            for (auto j = a; j <= b; j++)
-            {
-                iterBegin = this->pOrgs[l][j].begin();
-                iterEnd = this->pOrgs[l][j].end();
-                for (iter = iterBegin; iter != iterEnd; iter++)
-                {
-#ifdef WORKLOAD_COUNT
-                    result++;
-#else
-                    result ^= iter->id;
-#endif
-                }
-            }
-        }
-        else
-        {
-            // Comparisons needed
-            
-            // Handle the partition that contains a: consider both originals and replicas, comparisons needed
-            if (a == b)
-            {
-                // Special case when query overlaps only one partition, Lemma 3
-                if (!foundzero && !foundone)
-                {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-                        if ((iter->start <= Q.end) && (Q.start <= iter->end))
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-                else if (foundzero)
-                {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-                        if (iter->start <= Q.end)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-                else if (foundone)
-                {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-                        if (Q.start <= iter->end)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // Lemma 1
-                if (!foundzero)
-                {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-                        if (Q.start <= iter->end)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-                else
-                {
-                    iterBegin = this->pOrgs[l][a].begin();
-                    iterEnd = this->pOrgs[l][a].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-#ifdef WORKLOAD_COUNT
-                        result++;
-#else
-                        result ^= iter->id;
-#endif
-                    }
-                }
-            }
-            
-            // Lemma 1, 3
-            if (!foundzero)
-            {
-                //TODO with
-                iterBegin = this->pReps[l][a].begin();
-                iterEnd = this->pReps[l][a].end();
-                for (iter = iterBegin; iter != iterEnd; iter++)
-                {
-                    if (Q.start <= iter->end)
-                    {
-#ifdef WORKLOAD_COUNT
-                        result++;
-#else
-                        result ^= iter->id;
-#endif
-                    }
-                }
-            }
-            else
-            {
-                iterBegin = this->pReps[l][a].begin();
-                iterEnd = this->pReps[l][a].end();
-                for (iter = iterBegin; iter != iterEnd; iter++)
-                {
-#ifdef WORKLOAD_COUNT
-                    result++;
-#else
-                    result ^= iter->id;
-#endif
-                }
-            }
-            
-            if (a < b)
-            {
-                if (!foundone)
-                {
-                    // Handle the rest before the partition that contains b: consider only originals, no comparisons needed
-                    for (auto j = a+1; j < b; j++)
-                    {
-                        iterBegin = this->pOrgs[l][j].begin();
-                        iterEnd = this->pOrgs[l][j].end();
-                        for (iter = iterBegin; iter != iterEnd; iter++)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                    
-                    // Handle the partition that contains b: consider only originals, comparisons needed
-                    iterBegin = this->pOrgs[l][b].begin();
-                    iterEnd = this->pOrgs[l][b].end();
-                    for (iter = iterBegin; iter != iterEnd; iter++)
-                    {
-                        if (iter->start <= Q.end)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-                else
-                {
-                    for (auto j = a+1; j <= b; j++)
-                    {
-                        iterBegin = this->pOrgs[l][j].begin();
-                        iterEnd = this->pOrgs[l][j].end();
-                        for (iter = iterBegin; iter != iterEnd; iter++)
-                        {
-#ifdef WORKLOAD_COUNT
-                            result++;
-#else
-                            result ^= iter->id;
-#endif
-                        }
-                    }
-                }
-            }
-            
-            if ((!foundone) && (b%2)) //last bit of b is 1
-                foundone = 1;
-            if ((!foundzero) && (!(a%2))) //last bit of a is 0
-                foundzero = 1;
-        }
-        a >>= 1; // a = a div 2
-        b >>= 1; // b = b div 2
-    }
-    
-    // Handle root.
-    if (foundone && foundzero)
-    {
-        // All contents are guaranteed to be results
-        iterBegin = this->pOrgs[this->numBits][0].begin();
-        iterEnd = this->pOrgs[this->numBits][0].end();
+  }
+  return result;
+}
+
+// ID-collecting version of executeBottomUp_gOverlaps for DuckDB integration.
+// Instead of counting/XORing, this pushes each matching RecordId into `result`.
+void HINT_M::collectBottomUp_gOverlaps(RangeQuery Q,
+                                       std::vector<RecordId> &result) {
+  RelationIterator iter, iterBegin, iterEnd;
+  Timestamp a = Q.start >> (this->maxBits - this->numBits);
+  Timestamp b = Q.end >> (this->maxBits - this->numBits);
+  bool foundzero = false;
+  bool foundone = false;
+
+  for (auto l = 0; l < this->numBits; l++) {
+    if (foundone && foundzero) {
+      // Partition totally covers query range — all contents are results
+      iterBegin = this->pReps[l][a].begin();
+      iterEnd = this->pReps[l][a].end();
+      for (iter = iterBegin; iter != iterEnd; iter++)
+        result.push_back(iter->id);
+
+      for (auto j = a; j <= b; j++) {
+        iterBegin = this->pOrgs[l][j].begin();
+        iterEnd = this->pOrgs[l][j].end();
         for (iter = iterBegin; iter != iterEnd; iter++)
-        {
-#ifdef WORKLOAD_COUNT
-            result++;
-#else
-            result ^= iter->id;
-#endif
-        }
-    }
-    else
-    {
-        // Comparisons needed
-        iterBegin = this->pOrgs[this->numBits][0].begin();
-        iterEnd = this->pOrgs[this->numBits][0].end();
-        for (iter = iterBegin; iter != iterEnd; iter++)
-        {
+          result.push_back(iter->id);
+      }
+    } else {
+      // Comparisons needed
+      if (a == b) {
+        if (!foundzero && !foundone) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
             if ((iter->start <= Q.end) && (Q.start <= iter->end))
-            {
-#ifdef WORKLOAD_COUNT
-                result++;
-#else
-                result ^= iter->id;
-#endif
-            }
+              result.push_back(iter->id);
+          }
+        } else if (foundzero) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->start <= Q.end)
+              result.push_back(iter->id);
+          }
+        } else if (foundone) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (Q.start <= iter->end)
+              result.push_back(iter->id);
+          }
         }
+      } else {
+        // Lemma 1
+        if (!foundzero) {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (Q.start <= iter->end)
+              result.push_back(iter->id);
+          }
+        } else {
+          iterBegin = this->pOrgs[l][a].begin();
+          iterEnd = this->pOrgs[l][a].end();
+          for (iter = iterBegin; iter != iterEnd; iter++)
+            result.push_back(iter->id);
+        }
+      }
+
+      // Lemma 1, 3
+      if (!foundzero) {
+        iterBegin = this->pReps[l][a].begin();
+        iterEnd = this->pReps[l][a].end();
+        for (iter = iterBegin; iter != iterEnd; iter++) {
+          if (Q.start <= iter->end)
+            result.push_back(iter->id);
+        }
+      } else {
+        iterBegin = this->pReps[l][a].begin();
+        iterEnd = this->pReps[l][a].end();
+        for (iter = iterBegin; iter != iterEnd; iter++)
+          result.push_back(iter->id);
+      }
+
+      if (a < b) {
+        if (!foundone) {
+          for (auto j = a + 1; j < b; j++) {
+            iterBegin = this->pOrgs[l][j].begin();
+            iterEnd = this->pOrgs[l][j].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+              result.push_back(iter->id);
+          }
+
+          iterBegin = this->pOrgs[l][b].begin();
+          iterEnd = this->pOrgs[l][b].end();
+          for (iter = iterBegin; iter != iterEnd; iter++) {
+            if (iter->start <= Q.end)
+              result.push_back(iter->id);
+          }
+        } else {
+          for (auto j = a + 1; j <= b; j++) {
+            iterBegin = this->pOrgs[l][j].begin();
+            iterEnd = this->pOrgs[l][j].end();
+            for (iter = iterBegin; iter != iterEnd; iter++)
+              result.push_back(iter->id);
+          }
+        }
+      }
+
+      if ((!foundone) && (b % 2))
+        foundone = 1;
+      if ((!foundzero) && (!(a % 2)))
+        foundzero = 1;
     }
-    
-    
-    return result;
+    a >>= 1;
+    b >>= 1;
+  }
+
+  // Handle root
+  if (foundone && foundzero) {
+    iterBegin = this->pOrgs[this->numBits][0].begin();
+    iterEnd = this->pOrgs[this->numBits][0].end();
+    for (iter = iterBegin; iter != iterEnd; iter++)
+      result.push_back(iter->id);
+  } else {
+    iterBegin = this->pOrgs[this->numBits][0].begin();
+    iterEnd = this->pOrgs[this->numBits][0].end();
+    for (iter = iterBegin; iter != iterEnd; iter++) {
+      if ((iter->start <= Q.end) && (Q.start <= iter->end))
+        result.push_back(iter->id);
+    }
+  }
 }
