@@ -1,0 +1,10 @@
+# name: test/sql/hint.test
+# description: test hint extension
+# group: [sql]
+
+require hint
+
+query I
+SELECT * FROM hint_search(1356994800, 1357081200);
+----
+0
