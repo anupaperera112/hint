@@ -11,10 +11,10 @@ OBJECTS = $(SOURCES:.cpp=.o)
 
 all: query
 
-query: lscan 1dgrid hint hint_m hnit_m_delta
+query: lscan 1dgrid hint hint_m hint_m_delta
 #check this 
 
-lscan: $(OBJECTS)
+lscan: $(  )
 	$(CC) $(CFLAGS) $(LDFLAGS) utils.o containers/relation.o main_lscan.cpp -o query_lscan.exec $(LDADD)
 
 1dgrid: $(OBJECTS)
@@ -35,7 +35,7 @@ query_hint_m_simd: $(OBJECTS) indices/hint_m_simd.o
 	$(CC) $(CFLAGS) $(LDFLAGS) utils.o containers/relation.o containers/offsets_templates.o containers/offsets.o indices/hierarchicalindex.o indices/hint_m_simd.o indices/hint_m_subs+sort.o indices/hint_m_subs+sopt.o indices/hint_m_subs+sort+sopt.o indices/hint_m_subs+sort+sopt+ss.o indices/hint_m_subs+sort+sopt+cm.o indices/hint_m_subs+sort+cm.o indices/hint_m_subs+sort+ss+cm.o indices/hint_m_all.o main_hint_m.cpp -o query_hint_m_simd.exec $(LDADD)
 
 duckdb_amalg/duckdb.o: duckdb_amalg/duckdb.cpp
-	$(CC) $(CFLAGS) -c duckdb_amalg/duckdb.cpp -o duckdb_amalg/duckdb.o
+	$(CC) -O1 -std=c++14 -w -I./boost_1_84_0 -I/opt/homebrew/include -c duckdb_amalg/duckdb.cpp -o duckdb_amalg/duckdb.o
 
 duckdb_benchmark: $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $(HINT_M_DELTA_OBJS) duckdb_amalg/duckdb.o duckdb_hint_benchmark.cpp -lpthread -ldl -o duckdb_hint_benchmark.exec $(LDADD)
